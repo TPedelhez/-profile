@@ -1,7 +1,9 @@
 // Truc Jazz · le prof (fonction serveur Vercel).
 // Reçoit la question de l'élève + un résumé texte de ce que le micro a reconnu,
-// et renvoie la réponse de Claude en flux (texte brut). La clé API reste côté serveur :
-// variable d'environnement ANTHROPIC_API_KEY dans le projet Vercel.
+// et renvoie la réponse en flux (texte brut). Les clés restent côté serveur :
+// - OPENAI_API_KEY : le prof utilise OpenAI (modèle gpt-6.1-terra) ;
+// - sinon ANTHROPIC_API_KEY : le prof utilise Claude.
+// PROF_PROVIDER=openai|anthropic force l'un ou l'autre quand les deux clés existent.
 import Anthropic from '@anthropic-ai/sdk';
 
 const SYSTEM = `Tu es le prof de piano jazz de l'app « Truc Jazz ». L'élève apprend sans programme : il pioche de petits trucs (shells, voicings sans fondamentale, gamme blues, substitution tritonique, walking bass…) et les joue tout de suite sur son piano.
@@ -40,7 +42,9 @@ export default async function handler(req, res) {
     res.end(JSON.stringify({ error: 'access_code' }));
     return;
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
+  const provider = process.env.PROF_PROVIDER || (process.env.OPENAI_API_KEY ? 'openai' : 'anthropic');
+  const keyOk = provider === 'openai' ? !!process.env.OPENAI_API_KEY : !!process.env.ANTHROPIC_API_KEY;
+  if (!keyOk) {
     res.statusCode = 503;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.end(JSON.stringify({ error: 'no_key' }));
@@ -73,10 +77,70 @@ export default async function handler(req, res) {
     `Question de l'élève : ${question}`,
   ].filter(Boolean).join('\n\n');
 
-  const client = new Anthropic();
+  const system = voice ? SYSTEM + VOICE : SYSTEM;
   res.statusCode = 200;
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Prof-Provider', provider);
+  if (provider === 'openai') await answerOpenAI(res, system, content, voice);
+  else await answerClaude(res, system, content);
+}
+
+// --- OpenAI (Responses API, en flux) ---
+const OPENAI_MODEL = 'gpt-6.1-terra';
+async function answerOpenAI(res, system, content, voice) {
+  try {
+    const r = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        instructions: system,
+        input: content,
+        stream: true,
+        store: false,
+        max_output_tokens: 1500,
+        // à l'oral on veut la première phrase tout de suite : pas de raisonnement
+        reasoning: { effort: voice ? 'none' : 'low' },
+        text: { verbosity: 'low' },
+      }),
+    });
+    if (!r.ok || !r.body) {
+      const detail = (await r.text()).slice(0, 300);
+      res.statusCode = 502;
+      res.end(`\n\n(Le prof ne répond pas : OpenAI a renvoyé l'erreur ${r.status}. ${detail})`);
+      return;
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const data = block.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).trim()).join('');
+        if (!data || data === '[DONE]') continue;
+        let ev;
+        try { ev = JSON.parse(data); } catch { continue; }
+        if (ev.type === 'response.output_text.delta' && ev.delta) res.write(ev.delta);
+        else if (ev.type === 'error') res.write(`\n\n(Erreur : ${ev.message || 'inconnue'})`);
+        else if (ev.type === 'response.failed') res.write(`\n\n(Le prof n'a pas pu répondre${ev.response && ev.response.error ? ' : ' + ev.response.error.message : ''}.)`);
+      }
+    }
+    res.end();
+  } catch (e) {
+    if (!res.headersSent) res.statusCode = 502;
+    res.end('\n\n(Le prof ne répond pas : connexion à OpenAI impossible.)');
+  }
+}
+
+// --- Claude (Anthropic, en flux) ---
+async function answerClaude(res, system, content) {
+  const client = new Anthropic();
 
   try {
     const stream = client.beta.messages.stream({
@@ -85,7 +149,7 @@ export default async function handler(req, res) {
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
       output_config: { effort: 'low' },
-      system: voice ? SYSTEM + VOICE : SYSTEM,
+      system,
       messages: [{ role: 'user', content }],
     });
     stream.on('text', delta => res.write(delta));

@@ -1,6 +1,6 @@
 /* Truc Jazz · Labo d'écoute
    Micro (sans traitements vocaux) → AudioWorklet → détecteur → vérification de la forme attendue.
-   Le prof (Claude) reçoit un résumé texte de ce qui a été reconnu. */
+   Le prof (OpenAI ou Claude) reçoit un résumé texte de ce qui a été reconnu. */
 (function () {
   'use strict';
 
@@ -590,7 +590,7 @@
       }
       if (res.status === 503) {
         a.className = 'msg err';
-        a.textContent = fr('Le prof n’est pas encore branché : il faut ajouter une clé API Anthropic (variable ANTHROPIC_API_KEY) dans les réglages du projet Vercel, puis redéployer.');
+        a.textContent = fr('Le prof n’est pas encore branché : il faut une clé API (OPENAI_API_KEY ou ANTHROPIC_API_KEY) dans les réglages du projet Vercel, puis redéployer.');
         if (voice) TTS.say('Je ne suis pas encore branché : il manque la clé API dans Vercel.');
         return;
       }
