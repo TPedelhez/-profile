@@ -310,6 +310,7 @@
   }
   function onFrame(f) {
     S.frame = f;
+    if (f.onset) S.lastOnsetT = f.t;
     if (S.testing) {
       if (f.onset) S.testing.hits.push(f.t);
     } else if (f.t >= S.muteUntil) {
@@ -518,6 +519,23 @@
   };
   if (TTS.ok) { TTS.pick(); speechSynthesis.onvoiceschanged = () => TTS.pick(); }
 
+  // Code d'accès (si le propriétaire en a défini un dans Vercel), gardé sur cet appareil
+  const CODE_KEY = 'truc-jazz:code';
+  function accessCode() { try { return localStorage.getItem(CODE_KEY) || ''; } catch (e) { return ''; } }
+  function askAccessCode() {
+    const c = window.prompt('Code d’accès du prof (défini dans Vercel, variable ACCESS_CODE) :');
+    if (c == null) return false;
+    try { localStorage.setItem(CODE_KEY, c.trim()); } catch (e) { /* pas de stockage : on redemandera */ }
+    return true;
+  }
+  async function apiFetch(url, init, retried) {
+    init = init || {};
+    init.headers = Object.assign({}, init.headers, { 'x-access-code': accessCode() });
+    const res = await fetch(url, init);
+    if (res.status === 401 && !retried && askAccessCode()) return apiFetch(url, init, true);
+    return res;
+  }
+
   let profAbort = null;
   async function askProf(question, opts) {
     opts = opts || {};
@@ -559,12 +577,17 @@
     };
     profAbort = new AbortController();
     try {
-      const res = await fetch('/api/prof', {
+      const res = await apiFetch('/api/prof', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ question, session: sessionText(), history: S.history.slice(-3), voice }),
         signal: profAbort.signal,
       });
+      if (res.status === 401) {
+        a.className = 'msg err';
+        a.textContent = fr('Code d’accès incorrect.');
+        return;
+      }
       if (res.status === 503) {
         a.className = 'msg err';
         a.textContent = fr('Le prof n’est pas encore branché : il faut ajouter une clé API Anthropic (variable ANTHROPIC_API_KEY) dans les réglages du projet Vercel, puis redéployer.');
@@ -688,6 +711,159 @@
     listen();
   }
 
+  // ---------- Prof temps réel (OpenAI Realtime, WebRTC) ----------
+  // Le son du micro part en direct vers le modèle vocal : il entend ta voix et ton piano.
+  // En plus, l'app lui envoie en texte ce que le détecteur a reconnu (noms exacts des notes).
+  const RT = { pc: null, dc: null, mic: null, audio: null, an: null, buf: null, on: false,
+    lastCtx: '', lastCtxAt: 0, tStop: null, latShown: true, bubble: null, text: '', speaking: false, lastPiano: -1 };
+  function rtStatus(msg) { $('rtStatus').textContent = msg; }
+  function rtSend(obj) { if (RT.dc && RT.dc.readyState === 'open') RT.dc.send(JSON.stringify(obj)); }
+  function rtContext(force) {
+    const txt = sessionText();
+    const now = performance.now();
+    if (!force && (txt === RT.lastCtx || now - RT.lastCtxAt < 2500)) return;
+    RT.lastCtx = txt;
+    RT.lastCtxAt = now;
+    rtSend({ type: 'conversation.item.create', item: { type: 'message', role: 'user',
+      content: [{ type: 'input_text', text: '[App] Infos automatiques du détecteur (pas une question de l’élève) :\n' + txt }] } });
+  }
+  function rtBubble() {
+    const p = document.createElement('p');
+    p.className = 'msg a rt';
+    p.textContent = '…';
+    $('profThread').appendChild(p);
+    p.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    return p;
+  }
+  function rtEvent(ev) {
+    switch (ev.type) {
+      case 'input_audio_buffer.speech_started':
+        rtStatus('Il t’écoute…');
+        rtContext(false);
+        break;
+      case 'input_audio_buffer.speech_stopped':
+        RT.tStop = performance.now();
+        RT.latShown = false;
+        rtStatus('Il réfléchit…');
+        break;
+      case 'response.output_audio_transcript.delta':
+        if (!RT.bubble) { RT.bubble = rtBubble(); RT.text = ''; }
+        RT.text += ev.delta || '';
+        RT.bubble.textContent = RT.text;
+        break;
+      case 'response.output_audio_transcript.done':
+        if (RT.bubble) { RT.bubble.textContent = ev.transcript || RT.text; S.history.push({ q: '(à l’oral)', a: RT.bubble.textContent }); }
+        RT.bubble = null;
+        break;
+      case 'response.done':
+        rtStatus('À toi : parle-lui, ou joue.');
+        break;
+      case 'error':
+        rtStatus('Erreur du modèle vocal : ' + ((ev.error && ev.error.message) || 'inconnue'));
+        break;
+      default:
+    }
+  }
+  // Écoute la voix du prof : sert à mesurer son délai de réponse et à couper le détecteur de piano pendant qu'il parle
+  function rtWatch(stream) {
+    if (!AU.ensure()) return;
+    const ctx = AU.context();
+    const src = ctx.createMediaStreamSource(stream);
+    RT.an = ctx.createAnalyser();
+    RT.an.fftSize = 1024;
+    RT.buf = new Float32Array(RT.an.fftSize);
+    src.connect(RT.an);
+  }
+  function rtTick() {
+    if (!RT.on) return;
+    if (RT.an) {
+      RT.an.getFloatTimeDomainData(RT.buf);
+      let e = 0;
+      for (let i = 0; i < RT.buf.length; i++) e += RT.buf[i] * RT.buf[i];
+      const speaking = Math.sqrt(e / RT.buf.length) > 0.01;
+      if (speaking) {
+        if (S.ctx) S.muteUntil = Math.max(S.muteUntil, S.ctx.currentTime + 0.4);
+        if (!RT.latShown && RT.tStop != null) {
+          RT.latShown = true;
+          $('rtLat').textContent = `Tu as fini de parler → il répond à voix haute en ${((performance.now() - RT.tStop) / 1000).toFixed(2).replace('.', ',')} s`;
+        }
+        if (!RT.speaking) rtStatus('Il parle… (tu peux lui couper la parole)');
+      }
+      RT.speaking = speaking;
+    }
+    // Option : ne pas lui envoyer le piano (le micro se coupe 1,2 s après chaque attaque)
+    if (RT.mic && $('rtGate').checked && S.running) {
+      const playing = S.lastOnsetT != null && S.ctx.currentTime - S.lastOnsetT < 1.2;
+      RT.mic.enabled = !playing;
+    } else if (RT.mic) {
+      RT.mic.enabled = true;
+    }
+    requestAnimationFrame(rtTick);
+  }
+  async function rtStart() {
+    const btn = $('rtBtn');
+    btn.disabled = true;
+    rtStatus('Connexion…');
+    try {
+      if (!AU.ensure()) throw new Error('audio');
+      const res = await apiFetch('/api/realtime', { method: 'POST' });
+      if (res.status === 503) { rtStatus('Pas encore branché : ajoute ta clé OpenAI (variable OPENAI_API_KEY) dans le projet Vercel, puis redéploie.'); return; }
+      if (res.status === 401) { rtStatus('Code d’accès incorrect.'); return; }
+      if (!res.ok) {
+        let d = {};
+        try { d = await res.json(); } catch (e) { /* réponse vide */ }
+        rtStatus('OpenAI a refusé la session' + (d.status ? ' (' + d.status + ')' : '') + (d.detail ? ' : ' + d.detail : '.'));
+        return;
+      }
+      const { value } = await res.json();
+      // Pour lui, on garde l'annulation d'écho : sans elle, il s'entend lui-même dans le haut-parleur.
+      const ms = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
+      const pc = new RTCPeerConnection();
+      RT.audio = RT.audio || Object.assign(document.createElement('audio'), { autoplay: true });
+      RT.audio.hidden = true;
+      document.body.appendChild(RT.audio);
+      pc.ontrack = e => { RT.audio.srcObject = e.streams[0]; rtWatch(e.streams[0]); };
+      RT.mic = ms.getTracks()[0];
+      pc.addTrack(RT.mic, ms);
+      const dc = pc.createDataChannel('oai-events');
+      dc.onmessage = e => { try { rtEvent(JSON.parse(e.data)); } catch (err) { /* événement illisible */ } };
+      dc.onopen = () => { rtContext(true); rtStatus('Connecté. Parle-lui, ou joue.'); };
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      const sdp = await fetch('https://api.openai.com/v1/realtime/calls', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${value}`, 'Content-Type': 'application/sdp' },
+        body: offer.sdp,
+      });
+      if (!sdp.ok) throw new Error('sdp ' + sdp.status);
+      await pc.setRemoteDescription({ type: 'answer', sdp: await sdp.text() });
+      pc.onconnectionstatechange = () => { if (['failed', 'closed', 'disconnected'].indexOf(pc.connectionState) >= 0 && RT.on) rtStop('Appel terminé (' + pc.connectionState + ').'); };
+      RT.pc = pc;
+      RT.dc = dc;
+      RT.on = true;
+      btn.textContent = 'Raccrocher';
+      btn.dataset.on = '1';
+      requestAnimationFrame(rtTick);
+    } catch (e) {
+      rtStatus('Impossible d’ouvrir l’appel vocal (' + (e.message || e) + ').');
+      rtStop();
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  function rtStop(msg) {
+    RT.on = false;
+    try { if (RT.pc) RT.pc.close(); } catch (e) { /* déjà fermé */ }
+    if (RT.mic) RT.mic.stop();
+    if (RT.audio) RT.audio.srcObject = null;
+    RT.pc = RT.dc = RT.mic = RT.an = null;
+    RT.bubble = null;
+    const btn = $('rtBtn');
+    btn.textContent = 'Appeler le prof ChatGPT';
+    delete btn.dataset.on;
+    if (msg) rtStatus(msg);
+  }
+
   // ---------- Toast ----------
   let toastT = 0;
   function toast(msg) {
@@ -722,6 +898,14 @@
   } else {
     $('voiceBox').hidden = true;
     $('voiceNo').hidden = false;
+  }
+  if (window.RTCPeerConnection) {
+    $('rtBtn').addEventListener('click', () => { if (RT.on) rtStop('Raccroché.'); else rtStart(); });
+    $('rtGate').addEventListener('change', e => {
+      if (e.target.checked && !S.running) toast('Active d’abord le micro du piano (en haut) : c’est lui qui sait quand tu joues.');
+    });
+  } else {
+    $('rtBox').hidden = true;
   }
   $('profForm').addEventListener('submit', e => {
     e.preventDefault();

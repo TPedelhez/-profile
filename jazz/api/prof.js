@@ -33,6 +33,13 @@ export default async function handler(req, res) {
     res.end('Méthode non autorisée');
     return;
   }
+  const code = process.env.ACCESS_CODE;
+  if (code && req.headers['x-access-code'] !== code) {
+    res.statusCode = 401;
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.end(JSON.stringify({ error: 'access_code' }));
+    return;
+  }
   if (!process.env.ANTHROPIC_API_KEY) {
     res.statusCode = 503;
     res.setHeader('Content-Type', 'application/json; charset=utf-8');

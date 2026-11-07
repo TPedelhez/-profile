@@ -79,6 +79,17 @@
         <p class="voice-live" id="voiceLive" aria-live="polite"></p>
         <p class="voice-lat" id="voiceLat"></p>
       </div>
+      <div class="rt" id="rtBox">
+        <h3 class="rt-title">Prof ChatGPT, en temps réel</h3>
+        <p class="rt-desc">Un vrai appel vocal : il entend ta voix et ton piano, et répond en une fraction de seconde. L’app lui envoie aussi les notes reconnues. Avec des écouteurs, c’est mieux : il ne s’entend pas lui-même.</p>
+        <div class="rt-row">
+          <button class="talk rt-btn" id="rtBtn" type="button">Appeler le prof ChatGPT</button>
+          <label class="hands" for="rtGate"><input type="checkbox" id="rtGate"> Ne pas lui envoyer le piano (s’il réagit à chaque phrase jouée)</label>
+        </div>
+        <p class="voice-live" id="rtStatus" aria-live="polite"></p>
+        <p class="voice-lat" id="rtLat"></p>
+      </div>
+      <h3 class="rt-title">Prof Claude</h3>
       <p class="hint" id="voiceNo" hidden>La reconnaissance vocale n’existe pas dans ce navigateur (essaie Chrome ou Safari). Tu peux écrire ta question.</p>
       <div class="prof-thread" id="profThread"></div>
       <form class="prof-form" id="profForm">
