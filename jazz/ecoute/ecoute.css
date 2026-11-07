@@ -1,0 +1,133 @@
+/* Truc Jazz · Labo d'écoute (s'appuie sur ../style.css) */
+:root {
+  /* Couleurs du clavier, identiques dans les deux thèmes comme le reste du meuble */
+  --k-good: #2E9A5E;
+}
+
+.lab .top { flex-wrap: nowrap; }
+
+.mic-card {
+  display: grid;
+  gap: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 22px;
+}
+.mic-card .cta { justify-self: start; }
+.mic-info p { margin: 0; color: var(--ink-2); font-size: 14px; }
+.mic-info .ok { color: var(--ok); font-weight: 600; }
+.mic-info .warn { color: var(--felt); font-weight: 600; }
+.meter { height: 6px; background: var(--paper-2); border-radius: 3px; overflow: hidden; }
+.meter span { display: block; height: 100%; width: 0; background: var(--ok); transition: width 0.08s linear; }
+.mic-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; font-size: 14px; color: var(--ink-2); }
+.mic-tools .tune { font-variant-numeric: tabular-nums; }
+.lat-out { margin: 0; font-size: 14px; font-weight: 600; max-width: 64ch; }
+
+.mode-seg { margin-bottom: 18px; }
+
+.target-controls { display: flex; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 16px; }
+.target-controls select { max-width: 70vw; }
+.target-card {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.tc-sym { font-size: 56px; line-height: 1; }
+.tc-body { display: grid; gap: 8px; min-width: 0; }
+.tc-notes { display: flex; flex-wrap: wrap; gap: 6px; }
+.tc-notes .nn { font-size: 16px; padding: 2px 8px; border: 1px solid transparent; }
+.tc-notes .nn.good { background: var(--k-good); color: #FFFFFF; }
+.tc-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; font-size: 13px; color: var(--ink-2); }
+.tc-meta .btn { padding: 6px 10px; font-size: 13px; }
+
+.verdict { font-size: 20px; font-weight: 600; min-height: 1.5em; margin: 14px 0 4px; }
+.verdict.ok { color: var(--ok); }
+.verdict.ko { color: var(--felt); }
+.stats { color: var(--ink-2); font-size: 14px; margin: 0 0 18px; font-variant-numeric: tabular-nums; }
+
+.free-log { list-style: none; padding: 0; margin: 12px 0 18px; display: grid; gap: 6px; max-height: 280px; overflow-y: auto; }
+.free-log li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  padding: 8px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.free-log .sym { font-size: 22px; min-width: 3.5em; }
+.free-log .notes { font-weight: 600; }
+.free-log small { color: var(--ink-2); margin-left: auto; font-variant-numeric: tabular-nums; }
+.free-log .empty-row { color: var(--ink-2); background: transparent; border-style: dashed; }
+
+/* Le clavier, juste sous l'accord à jouer */
+.lab-kb {
+  background: var(--dock);
+  border-radius: 8px;
+  padding: 10px 10px 8px;
+  margin: 6px 0 22px;
+}
+#targetPane, #freePane { scroll-margin-top: 12px; }
+.lab-kb .kb { height: 112px; }
+.kb-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; margin: 8px 2px 0; font-size: 12px; color: var(--dock-3); }
+.lg { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -2px; }
+.lg.tg { box-shadow: inset 0 0 0 2px var(--k-lh); background: var(--ivory); }
+.lg.good { background: var(--k-good); }
+.lg.bad { background: var(--k-rh); }
+.lg.heard { background: var(--k-midi); }
+
+.k.tg::before {
+  content: '';
+  position: absolute;
+  inset: 3px 3px 3px 3px;
+  border: 3px solid var(--k-lh);
+  border-radius: 4px;
+  pointer-events: none;
+}
+.k.b.tg::before { inset: 2px; border-width: 2px; }
+.k.w.good, .k.b.good { background: var(--k-good); }
+.k.w.bad, .k.b.bad { background: var(--k-rh); }
+.k.heard:not(.good):not(.bad) { box-shadow: inset 0 -14px 0 var(--k-midi); }
+.k.w.heard:not(.good):not(.bad) { background: linear-gradient(var(--ivory) 55%, var(--k-midi)); }
+.k .lab { color: #FFFFFF; }
+.k.w:not(.good):not(.bad) .lab { color: var(--ebony); }
+
+.prof { margin-top: 8px; }
+.prof-thread { display: grid; gap: 12px; margin-bottom: 12px; }
+.msg { margin: 0; max-width: 68ch; }
+.msg.q { font-weight: 600; }
+.msg.a {
+  white-space: pre-wrap;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+.msg.err { color: var(--felt); font-weight: 600; }
+.prof-form { display: flex; align-items: flex-end; gap: 8px; }
+.prof-form textarea {
+  font: inherit;
+  flex: 1;
+  min-width: 0;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+.prof-form textarea:focus { border-color: var(--ink); outline: none; }
+
+@media (max-width: 560px) {
+  .tc-sym { font-size: 46px; }
+  .verdict { font-size: 18px; }
+  .prof-form { flex-direction: column; align-items: stretch; }
+}

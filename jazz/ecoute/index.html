@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Labo d'écoute · Truc Jazz</title>
+  <meta name="description" content="Joue sur ton piano, l'app écoute au micro et reconnaît les accords.">
+  <meta name="theme-color" content="#131215">
+  <link rel="icon" href="../icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Kalam:wght@700&family=Libre+Franklin:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="ecoute.css">
+</head>
+<body>
+  <div class="wrap lab">
+    <header class="top">
+      <a class="brand" href="../">Truc <b>Jazz</b></a>
+      <a class="pill-btn" href="../">← Retour aux trucs</a>
+    </header>
+
+    <section class="page-head">
+      <h1 class="display sm">Labo d’écoute</h1>
+      <p class="lede">Pose ton téléphone ou ton ordi sur le pupitre. L’app écoute ton piano au micro, reconnaît ce que tu joues et mesure en combien de temps.</p>
+    </section>
+
+    <section class="mic-card" id="micCard">
+      <button class="cta" id="micBtn" type="button">Activer le micro</button>
+      <div class="mic-info" id="micInfo">
+        <p>Le son reste sur ton appareil : il est analysé en direct, rien n’est enregistré ni envoyé.</p>
+      </div>
+      <div class="meter" aria-hidden="true"><span id="meterBar"></span></div>
+      <div class="mic-tools" id="micTools" hidden>
+        <button class="btn" id="latBtn" type="button">Mesurer la latence</button>
+        <span class="tune" id="tuneInfo">Accordage : en écoute…</span>
+        <span class="cpu" id="cpuInfo"></span>
+      </div>
+      <p class="lat-out" id="latOut" hidden></p>
+    </section>
+
+    <div class="seg mode-seg" role="group" aria-label="Mode">
+      <button type="button" data-mode="target" aria-pressed="true">Joue la forme</button>
+      <button type="button" data-mode="free" aria-pressed="false">Écoute libre</button>
+    </div>
+
+    <section id="targetPane">
+      <div class="target-controls">
+        <label class="keysel" for="trickSel"><span>Truc</span><select id="trickSel"></select></label>
+        <label class="keysel" for="keySel"><span>Tonalité</span><select id="keySel"></select></label>
+      </div>
+      <div class="target-card" id="targetCard"></div>
+      <p class="verdict" id="verdict" aria-live="polite">Active le micro, puis plaque la forme : toutes les notes ensemble.</p>
+      <p class="stats" id="stats"></p>
+    </section>
+
+    <section id="freePane" hidden>
+      <p class="hint"><b>Expérimental.</b> Joue ce que tu veux, accord par accord : les notes entendues s’allument en doré et chaque accord est noté sous le clavier. Sans savoir ce que tu vas jouer, la reconnaissance est moins sûre qu’en mode « Joue la forme » (des harmoniques peuvent passer pour des notes).</p>
+    </section>
+
+    <div class="lab-kb">
+      <div class="felt" aria-hidden="true"></div>
+      <div class="kb-wrap" id="kbWrap"><div class="kb" id="kb" aria-hidden="true"></div></div>
+      <p class="kb-legend"><span class="lg tg"></span>à jouer <span class="lg good"></span>reconnue <span class="lg bad"></span>en trop <span class="lg heard"></span>entendue</p>
+    </div>
+
+    <section id="freeLogPane" hidden>
+      <ol class="free-log" id="freeLog"></ol>
+    </section>
+
+    <section class="prof">
+      <h2 class="eyebrow">Le prof <span>Claude reçoit ce que l’app a reconnu, pas le son</span></h2>
+      <div class="prof-thread" id="profThread"></div>
+      <form class="prof-form" id="profForm">
+        <label for="profQ" class="sr">Ta question</label>
+        <textarea id="profQ" rows="2" placeholder="Ex. : Pourquoi je rate toujours le G7 ? Donne-moi un exercice pour la main gauche."></textarea>
+        <button class="cta sm" type="submit" id="profBtn">Demander</button>
+      </form>
+    </section>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="../theory.js"></script>
+  <script src="../tricks.js"></script>
+  <script src="../audio.js"></script>
+  <script src="detector.js"></script>
+  <script src="ecoute.js"></script>
+</body>
+</html>

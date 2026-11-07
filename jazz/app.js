@@ -111,6 +111,7 @@
           <a href="#" data-v="home">Maintenant</a>
           <a href="#trucs" data-v="trucs">Tous les trucs</a>
           <a href="#depanneur" data-v="depanneur">Dépanneur<span class="long"> d’accords</span></a>
+          <a href="ecoute/">Labo d’écoute</a>
         </nav>
       </header>
       <main id="view"></main>
@@ -567,7 +568,7 @@
       </a>
       ${review.length ? `<section class="block"><h2 class="eyebrow">À revoir</h2><div class="next">${review.map(nextCard).join('')}</div></section>` : ''}
       <p class="progress">${seen ? `${seen} truc${seen > 1 ? 's' : ''} déjà vu${seen > 1 ? 's' : ''}, ${known} acquis, sur ${TRICKS.length}.` : `${TRICKS.length} trucs t’attendent, dans n’importe quel ordre.`}
-        <a href="#trucs">Voir tous les trucs</a></p>`;
+        <a href="#trucs">Voir tous les trucs</a> · <a href="ecoute/">Labo d’écoute : l’app t’écoute jouer au micro</a></p>`;
     $('surprise').addEventListener('click', () => { S.situation = null; goTrick(pick(TRICKS)); });
     view.querySelectorAll('.sit').forEach(b => b.addEventListener('click', () => {
       const sit = SIT_BY_ID[b.dataset.sit];

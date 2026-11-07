@@ -175,5 +175,6 @@
     voices.clear();
   }
 
-  root.TJAudio = { ensure, now, ep, bass, hat, stopAll };
+  const context = () => ctx;
+  root.TJAudio = { ensure, now, ep, bass, hat, stopAll, context };
 })(window);
