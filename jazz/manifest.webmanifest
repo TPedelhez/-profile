@@ -1,0 +1,14 @@
+{
+  "name": "Truc Jazz",
+  "short_name": "Truc Jazz",
+  "description": "Un petit truc de jazz au piano, tout de suite, sans programme à suivre.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#131215",
+  "theme_color": "#131215",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
