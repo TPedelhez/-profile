@@ -314,7 +314,7 @@
       if (f.onset) S.testing.hits.push(f.t);
     } else if (f.t >= S.muteUntil) {
       if (S.mode === 'target') targetFrame(f);
-      else freeFrame(f);
+      freeFrame(f); // le journal de ce qui est joué sert aussi au prof, dans les deux modes
       tuneFrame(f);
     }
     S.lastFrame = f;
@@ -434,13 +434,22 @@
   }
 
   // ---------- Le prof ----------
+  function ago(t) {
+    const now = S.ctx ? S.ctx.currentTime : t;
+    const d = Math.max(0, now - t);
+    return d < 1 ? 'à l’instant' : `il y a ${d.toFixed(1).replace('.', ',')} s`;
+  }
   function sessionText() {
     const lines = [];
     const t = PLAYABLE.find(x => x.id === S.trickId);
-    lines.push(`Notation des notes : ${solf ? 'Do Ré Mi' : 'lettres'}.`);
+    lines.push(`Notation des notes : ${solf ? 'Do Ré Mi' : 'lettres'}. Mode de l’app : ${S.mode === 'target' ? '« Joue la forme »' : '« Écoute libre »'}.`);
     if (S.det) lines.push(`Accordage estimé du piano : La = ${S.det.a4.toFixed(1)} Hz.`);
-    if (t) lines.push(`Truc travaillé : « ${t.title.replace(/\[\[|\]\]|\{\{|\}\}/g, '')} », tonalité de ${TJ.pcName(S.key, null, solf)}.`);
-    const r = S.results.slice(-15);
+    if (t && S.mode === 'target') {
+      lines.push(`Truc travaillé : « ${t.title.replace(/\[\[|\]\]|\{\{|\}\}/g, '')} », tonalité de ${TJ.pcName(S.key, null, solf)}.`);
+      const sh = S.shapes[S.idx];
+      if (sh) lines.push(`Forme demandée en ce moment : ${TJ.fmtSymbol(sh.sym)} (${sh.notes.map(n => nameOct(n.midi)).join(' ')}).`);
+    }
+    const r = S.results.slice(-12);
     if (r.length) {
       lines.push('Essais de formes (du plus ancien au plus récent) :');
       r.forEach(x => {
@@ -448,16 +457,71 @@
         lines.push(x.ok ? `- ${sh} : réussi, reconnu en ${Math.round(x.ms)} ms` : `- ${sh} : raté${x.missing && x.missing.length ? ', manquait ' + x.missing.join(', ') : ''}${x.extra && x.extra.length ? ', en trop ' + x.extra.join(', ') : ''}`);
       });
     }
-    const fl = S.freeLog.slice(0, 12).reverse();
+    const fl = S.freeLog.slice(0, 16).reverse();
     if (fl.length) {
-      lines.push('Accords joués librement (du plus ancien au plus récent) :');
-      fl.forEach(e => lines.push(`- ${e.notes.map(nameOct).join(' ')}${e.chord ? ' → ' + TJ.fmtSymbol(e.chord.sym) + (e.chord.rootless ? ' (sans fondamentale)' : '') : ''}`));
+      lines.push('Ce qui vient d’être joué, attaque par attaque (reconnaissance libre, approximative : une basse peut manquer ou une harmonique passer pour une note ; du plus ancien au plus récent) :');
+      fl.forEach(e => lines.push(`- ${ago(e.t)} : ${e.notes.map(nameOct).join(' ')}${e.chord ? ' → ' + TJ.fmtSymbol(e.chord.sym) + (e.chord.rootless ? ' (sans fondamentale)' : '') : ''}`));
     }
     if (!r.length && !fl.length) lines.push('Rien n’a encore été joué au micro.');
     return lines.join('\n');
   }
 
-  async function askProf(question) {
+  // --- Voix du prof : lue phrase par phrase dès que le texte arrive ---
+  const TTS = {
+    ok: 'speechSynthesis' in window,
+    voice: null,
+    pending: 0,
+    onIdle: null,
+    pick() {
+      if (!this.ok) return;
+      const vs = speechSynthesis.getVoices().filter(v => /^fr(-|_|$)/i.test(v.lang));
+      const score = v => (/premium|enhanced|natural|neural/i.test(v.name) ? 4 : 0) + (/google/i.test(v.name) ? 3 : 0) + (/am[ée]lie|thomas|audrey|aur[ée]lie|marie|daniel/i.test(v.name) ? 2 : 0) + (/fr-FR/i.test(v.lang) ? 1 : 0);
+      this.voice = vs.sort((a, b) => score(b) - score(a))[0] || null;
+    },
+    unlock() { // iOS : la synthèse doit démarrer pendant un geste de l'utilisateur
+      if (!this.ok) return;
+      this.pick();
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      speechSynthesis.speak(u);
+    },
+    say(text, onStart) {
+      if (!this.ok || !text.trim()) return;
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = 'fr-FR';
+      if (this.voice) u.voice = this.voice;
+      u.rate = 1.07;
+      this.pending++;
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        this.pending = Math.max(0, this.pending - 1);
+        if (!this.pending && this.onIdle) { const f = this.onIdle; this.onIdle = null; f(); }
+      };
+      u.onstart = () => { if (onStart) onStart(); };
+      u.onend = u.onerror = finish;
+      // filet de sécurité : certains moteurs n'annoncent pas toujours la fin d'une phrase
+      setTimeout(finish, 4000 + text.length * 120);
+      speechSynthesis.speak(u);
+      // pendant que le prof parle, le micro l'entend : le détecteur ignore ce qui arrive
+      if (S.ctx) S.muteUntil = Math.max(S.muteUntil, S.ctx.currentTime + 1 + text.length * 0.07);
+    },
+    stop() {
+      if (!this.ok) return;
+      speechSynthesis.cancel();
+      this.pending = 0;
+      if (S.ctx) S.muteUntil = S.ctx.currentTime + 0.3;
+      if (this.onIdle) { const f = this.onIdle; this.onIdle = null; f(); }
+    },
+    whenIdle(f) { if (!this.pending) f(); else this.onIdle = f; },
+  };
+  if (TTS.ok) { TTS.pick(); speechSynthesis.onvoiceschanged = () => TTS.pick(); }
+
+  let profAbort = null;
+  async function askProf(question, opts) {
+    opts = opts || {};
+    const voice = !!opts.voice;
     const thread = $('profThread');
     const q = document.createElement('p');
     q.className = 'msg q';
@@ -467,17 +531,44 @@
     a.textContent = '…';
     thread.appendChild(q);
     thread.appendChild(a);
+    a.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     $('profBtn').disabled = true;
+    const t0 = opts.t0 || performance.now();
+    let tText = null;
+    let tVoice = null;
     let text = '';
+    let spoken = 0;
+    const showLat = () => {
+      if (!voice || tText == null) return;
+      $('voiceLat').textContent = `Tu as fini de parler → réponse écrite en ${((tText - t0) / 1000).toFixed(1).replace('.', ',')} s` +
+        (tVoice != null ? ` · voix en ${((tVoice - t0) / 1000).toFixed(1).replace('.', ',')} s` : '');
+    };
+    // découpe en phrases dès qu'elles sont complètes
+    const flush = final => {
+      const rest = text.slice(spoken);
+      const re = final ? /[\s\S]+$/ : /^[\s\S]*?[.!?…:](\s|$)/;
+      let m;
+      let chunk = '';
+      while ((m = re.exec(text.slice(spoken)))) {
+        chunk = m[0];
+        spoken += chunk.length;
+        if (voice) TTS.say(chunk, () => { if (tVoice == null) { tVoice = performance.now(); showLat(); } });
+        if (final) break;
+      }
+      return rest;
+    };
+    profAbort = new AbortController();
     try {
       const res = await fetch('/api/prof', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, session: sessionText(), history: S.history.slice(-3) }),
+        body: JSON.stringify({ question, session: sessionText(), history: S.history.slice(-3), voice }),
+        signal: profAbort.signal,
       });
       if (res.status === 503) {
         a.className = 'msg err';
         a.textContent = fr('Le prof n’est pas encore branché : il faut ajouter une clé API Anthropic (variable ANTHROPIC_API_KEY) dans les réglages du projet Vercel, puis redéployer.');
+        if (voice) TTS.say('Je ne suis pas encore branché : il manque la clé API dans Vercel.');
         return;
       }
       if (!res.ok || !res.body) throw new Error('http ' + res.status);
@@ -487,15 +578,114 @@
         const { value, done } = await reader.read();
         if (done) break;
         text += dec.decode(value, { stream: true });
+        if (tText == null && text.trim()) { tText = performance.now(); showLat(); }
         a.textContent = text;
+        flush(false);
       }
+      flush(true);
       S.history.push({ q: question, a: text });
     } catch (e) {
+      if (e && e.name === 'AbortError') { a.textContent = (text || '') + ' (interrompu)'; return; }
       a.className = 'msg err';
       a.textContent = text || fr('Le prof ne répond pas ici. Il ne fonctionne que sur la version en ligne de l’app (Vercel), avec une clé API configurée.');
     } finally {
+      profAbort = null;
       $('profBtn').disabled = false;
     }
+  }
+
+  // --- Ta voix : reconnaissance vocale du navigateur ---
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const V = { rec: null, on: false, handsFree: false, busy: false, interim: '', timer: 0, lastResult: 0, consumed: false };
+  function setVoiceState(state, extra) {
+    const btn = $('talkBtn');
+    const live = $('voiceLive');
+    btn.dataset.state = state;
+    const labels = { idle: 'Parler au prof', listen: 'Je t’écoute… (touche pour arrêter)', think: 'Le prof réfléchit…', speak: 'Le prof parle… (touche pour couper)' };
+    btn.querySelector('span').textContent = labels[state];
+    if (extra != null) live.textContent = extra;
+  }
+  function listen() {
+    if (!SR || V.busy) return;
+    V.consumed = false;
+    V.interim = '';
+    const rec = new SR();
+    V.rec = rec;
+    rec.lang = 'fr-FR';
+    rec.interimResults = true;
+    rec.continuous = true;
+    rec.maxAlternatives = 1;
+    rec.onresult = e => {
+      if (V.consumed) return;
+      let interim = '';
+      let final = '';
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        const r = e.results[i];
+        if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript;
+      }
+      V.lastResult = performance.now();
+      V.interim = (final || interim).trim();
+      $('voiceLive').textContent = V.interim ? '« ' + V.interim + ' »' : '';
+      clearTimeout(V.timer);
+      // Fin de phrase : résultat final, ou 0,7 s sans nouveau mot (plus rapide que l'attente du navigateur)
+      if (final.trim()) send(final.trim());
+      else V.timer = setTimeout(() => { if (V.interim) send(V.interim); }, 700);
+    };
+    rec.onerror = e => {
+      if (e.error === 'no-speech' || e.error === 'aborted') return;
+      const msg = {
+        'not-allowed': 'Accès au micro refusé pour la reconnaissance vocale.',
+        'service-not-allowed': 'La reconnaissance vocale est désactivée sur cet appareil.',
+        'audio-capture': 'Le micro est déjà pris : sur ce téléphone, l’écoute du piano et la reconnaissance vocale ne peuvent pas tourner en même temps. Écris ta question en attendant.',
+        network: 'La reconnaissance vocale a besoin d’Internet.',
+      }[e.error] || 'La reconnaissance vocale s’est arrêtée (' + e.error + ').';
+      stopVoice(msg);
+    };
+    rec.onend = () => {
+      V.rec = null;
+      if (V.on && !V.busy && !V.consumed) { try { listen(); } catch (err) { /* déjà relancée */ } }
+    };
+    try { rec.start(); } catch (err) { /* une écoute tourne déjà */ }
+    setVoiceState('listen', '');
+  }
+  function send(text) {
+    // un bruit isolé (« euh », une note de piano mal comprise) n'est pas une question
+    if (V.consumed || (text.split(/\s+/).length < 2 && text.length < 6)) return;
+    V.consumed = true;
+    clearTimeout(V.timer);
+    const t0 = V.lastResult || performance.now();
+    if (V.rec) { try { V.rec.abort(); } catch (err) { /* ok */ } }
+    V.busy = true;
+    setVoiceState('think');
+    askProf(text, { voice: true, t0 }).then(() => {
+      setVoiceState(TTS.pending ? 'speak' : 'think');
+      TTS.whenIdle(() => {
+        V.busy = false;
+        if (V.on && V.handsFree) listen();
+        else { V.on = false; setVoiceState('idle'); }
+      });
+    });
+    const poll = setInterval(() => { if (TTS.pending && V.busy) setVoiceState('speak'); if (!V.busy) clearInterval(poll); }, 150);
+  }
+  function stopVoice(msg) {
+    V.on = false;
+    V.busy = false;
+    clearTimeout(V.timer);
+    if (V.rec) { try { V.rec.abort(); } catch (err) { /* ok */ } }
+    if (profAbort) profAbort.abort();
+    TTS.stop();
+    setVoiceState('idle', msg || '');
+  }
+  function toggleVoice() {
+    const st = $('talkBtn').dataset.state;
+    if (st === 'speak' || st === 'think') { stopVoice(); return; }
+    if (V.on) { stopVoice(); return; }
+    TTS.unlock();
+    // réveille la fonction serveur pendant que tu parles (évite le démarrage à froid)
+    fetch('/api/prof', { method: 'GET' }).catch(() => {});
+    V.on = true;
+    V.handsFree = $('handsFree').checked;
+    listen();
   }
 
   // ---------- Toast ----------
@@ -526,6 +716,13 @@
     if (S.mode === 'free') setRange(36, 88);
     else loadShapes();
   }));
+  if (SR) {
+    $('talkBtn').addEventListener('click', toggleVoice);
+    setVoiceState('idle', '');
+  } else {
+    $('voiceBox').hidden = true;
+    $('voiceNo').hidden = false;
+  }
   $('profForm').addEventListener('submit', e => {
     e.preventDefault();
     const q = $('profQ').value.trim();

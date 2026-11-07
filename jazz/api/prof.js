@@ -16,6 +16,14 @@ Comment tu réponds :
 - Texte simple, sans titres ni tableaux ; une courte liste si vraiment utile.
 - Tu parles de musique et de piano. Si on te demande autre chose, ramène gentiment la conversation au piano.`;
 
+// En mode vocal, la réponse est lue à voix haute dès la première phrase.
+const VOICE = `
+
+MODE VOCAL : ta réponse va être lue à voix haute pendant que l'élève a les mains sur le clavier.
+- 1 à 3 phrases courtes, en langage parlé. Va droit au but : la première phrase répond à la question.
+- Ni listes, ni symboles, ni chiffres de degrés écrits en chiffres seuls.
+- Écris les accords et les notes comme on les prononce : « ré mineur sept », « sol sept », « do majeur sept », « si bémol ».`;
+
 const clip = (v, n) => String(v == null ? '' : v).slice(0, n);
 
 export default async function handler(req, res) {
@@ -45,6 +53,7 @@ export default async function handler(req, res) {
   }
   const session = clip(body.session, 6000);
   const history = Array.isArray(body.history) ? body.history.slice(-3) : [];
+  const voice = body.voice === true;
 
   // Chaque question part en une seule requête : les échanges précédents sont repris en texte,
   // ce qui évite de devoir rejouer l'historique complet de la conversation.
@@ -69,7 +78,7 @@ export default async function handler(req, res) {
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
       output_config: { effort: 'low' },
-      system: SYSTEM,
+      system: voice ? SYSTEM + VOICE : SYSTEM,
       messages: [{ role: 'user', content }],
     });
     stream.on('text', delta => res.write(delta));

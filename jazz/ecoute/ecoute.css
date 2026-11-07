@@ -101,6 +101,30 @@
 .k.w:not(.good):not(.bad) .lab { color: var(--ebony); }
 
 .prof { margin-top: 8px; }
+.voice { display: grid; gap: 10px; margin-bottom: 16px; }
+.talk {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  justify-self: start;
+  min-height: 56px;
+  padding: 12px 22px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  font-weight: 700;
+  font-size: 17px;
+  cursor: pointer;
+}
+.talk[data-state="listen"] { background: var(--felt); color: var(--felt-ink); animation: tj-pulse 1.4s ease-in-out infinite; }
+.talk[data-state="think"] { background: var(--paper-2); color: var(--ink); }
+.talk[data-state="speak"] { background: var(--ok); color: var(--paper); }
+@keyframes tj-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(163, 35, 46, 0.35); } 50% { box-shadow: 0 0 0 10px rgba(163, 35, 46, 0); } }
+.hands { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); }
+.voice-live { margin: 0; min-height: 1.4em; font-size: 17px; font-weight: 600; }
+.voice-lat { margin: 0; font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 .prof-thread { display: grid; gap: 12px; margin-bottom: 12px; }
 .msg { margin: 0; max-width: 68ch; }
 .msg.q { font-weight: 600; }
