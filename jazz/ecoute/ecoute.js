@@ -32,6 +32,96 @@
     results: [], freeLog: [], freePending: null, tune: [], cpu: [], history: [],
   };
 
+  // ---------- Boîte noire : journal de session (événements + son des ratés) ----------
+  // Envoyé au stockage privé du projet (Vercel Blob) toutes les 15 s, avec le code d'accès.
+  const APP_VERSION = '2026-11-07-boite-noire';
+  const LOG_KEY = 'truc-jazz:log';
+  const rnd = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
+  const LOG = {
+    on: (() => { try { return localStorage.getItem(LOG_KEY) !== 'off'; } catch (e) { return true; } })(),
+    session: new Date().toISOString().slice(0, 10) + '-' + rnd(8),
+    seq: 0,
+    queue: [],
+    t0: performance.now(),
+    clips: 0,
+    okClips: 0,
+    blocked: false,
+    ev(type, data) {
+      if (!this.on || this.blocked) return;
+      this.queue.push(Object.assign({ t: Math.round(performance.now() - this.t0), type }, data || {}));
+      if (this.queue.length >= 60) this.flush();
+    },
+    flush(beacon) {
+      if (!this.on || this.blocked || !this.queue.length) return;
+      const events = this.queue.splice(0);
+      const body = JSON.stringify({ session: this.session, seq: this.seq++, code: accessCode(), events });
+      if (beacon && navigator.sendBeacon) { navigator.sendBeacon('/api/log', new Blob([body], { type: 'application/json' })); return; }
+      fetch('/api/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: body.length < 60000 })
+        .then(r => { if (r.status === 401) { this.blocked = true; logUi(); } })
+        .catch(() => { this.queue = events.concat(this.queue).slice(-400); this.seq--; });
+    },
+  };
+  setInterval(() => LOG.flush(), 15000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') LOG.flush(true); });
+  window.addEventListener('pagehide', () => LOG.flush(true));
+  window.addEventListener('error', e => LOG.ev('js_error', { msg: String(e.message || e).slice(0, 300), src: (e.filename || '').split('/').pop(), line: e.lineno }));
+
+  // Les 8 dernières secondes de son du micro, pour en extraire un extrait autour d'un raté
+  const RING = { buf: null, pos: 0, sr: 48000, tEnd: 0 };
+  function ringPush(samples, tEnd) {
+    if (!RING.buf) return;
+    const b = RING.buf;
+    for (let i = 0; i < samples.length; i++) { b[RING.pos] = samples[i]; RING.pos = (RING.pos + 1) % b.length; }
+    RING.tEnd = tEnd;
+  }
+  function ringSlice(t1, t2) {
+    const b = RING.buf;
+    const n = Math.round((t2 - t1) * RING.sr);
+    const back = Math.round((RING.tEnd - t1) * RING.sr);
+    if (!b || back > b.length || n <= 0) return null;
+    const out = new Float32Array(n);
+    let start = (RING.pos - back + b.length * 2) % b.length;
+    for (let i = 0; i < n; i++) out[i] = b[(start + i) % b.length];
+    return out;
+  }
+  function wav(samples, sr) {
+    const buf = new ArrayBuffer(44 + samples.length * 2);
+    const v = new DataView(buf);
+    const str = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, sr, true);
+    v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, samples[i])) * 32767, true);
+    return new Blob([buf], { type: 'audio/wav' });
+  }
+  // Envoie ~3,5 s de son autour d'une attaque (1 s avant, 2,5 s après) quand l'audio est arrivé
+  function sendClip(onsetT, label, extra) {
+    if (!LOG.on || LOG.blocked || LOG.clips >= 40 || !RING.buf) return;
+    LOG.clips++;
+    const wait = Math.max(0, onsetT + 2.5 - RING.tEnd) * 1000 + 100;
+    setTimeout(() => {
+      const pcm = ringSlice(onsetT - 1, onsetT + 2.5);
+      if (!pcm) return;
+      const name = label.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/♭/g, 'b').replace(/♯/g, '#');
+      fetch(`/api/clip?session=${LOG.session}&label=${encodeURIComponent(name)}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'x-access-code': accessCode() }, body: wav(pcm, RING.sr),
+      }).then(r => r.json()).then(d => LOG.ev('clip_saved', Object.assign({ label: name, pathname: d.pathname || null, onset: +onsetT.toFixed(3) }, extra || {})))
+        .catch(() => LOG.ev('clip_error', { label: name }));
+    }, wait);
+  }
+  function logUi() {
+    const el = $('logInfo');
+    if (!el) return;
+    $('logToggle').checked = LOG.on;
+    el.textContent = !LOG.on ? 'Boîte noire coupée : rien n’est enregistré.'
+      : LOG.blocked ? 'Boîte noire en pause : code d’accès manquant ou incorrect.'
+        : `Session ${LOG.session} enregistrée (privée).`;
+  }
+  LOG.ev('session_start', {
+    v: APP_VERSION, ua: navigator.userAgent, lang: navigator.language, screen: `${screen.width}x${screen.height}@${window.devicePixelRatio}`,
+    solf: store.solf !== false, path: location.pathname,
+  });
+
   // ---------- Formes des trucs ----------
   function trickShapes(t, key) {
     const iv = TJ.KEY_IV[key];
@@ -124,8 +214,8 @@
   function fillSelects() {
     $('trickSel').innerHTML = PLAYABLE.map(t => `<option value="${t.id}"${t.id === S.trickId ? ' selected' : ''}>${esc(t.title.replace(/\[\[|\]\]|\{\{|\}\}/g, ''))}</option>`).join('');
     $('keySel').innerHTML = TJ.KEYS.map(k => `<option value="${k.k}"${k.k === S.key ? ' selected' : ''}>${esc(TJ.pcName(k.k, null, solf))}</option>`).join('');
-    $('trickSel').addEventListener('change', e => { S.trickId = e.target.value; loadShapes(); });
-    $('keySel').addEventListener('change', e => { S.key = e.target.value; loadShapes(); });
+    $('trickSel').addEventListener('change', e => { S.trickId = e.target.value; loadShapes(); LOG.ev('trick', { id: S.trickId, key: S.key }); });
+    $('keySel').addEventListener('change', e => { S.key = e.target.value; loadShapes(); LOG.ev('trick', { id: S.trickId, key: S.key }); });
   }
   function loadShapes() {
     S.shapes = trickShapes(PLAYABLE.find(t => t.id === S.trickId) || PLAYABLE[0], S.key);
@@ -199,6 +289,8 @@
     if (S.okStreak >= 2) {
       const ms = age * 1000;
       S.results.push({ ok: true, ms, sym: sh.sym, notes: sh.notes.map(n => n.midi) });
+      LOG.ev('shape_ok', { trick: S.trickId, key: S.key, sym: sh.sym, notes: sh.notes.map(n => n.midi), ms: Math.round(ms), onset: +S.onsetT.toFixed(3) });
+      if (LOG.okClips < 3) { LOG.okClips++; sendClip(S.onsetT, 'ok-' + sh.sym, { ok: true }); }
       setVerdict(fr(`✓ ${esc(TJ.fmtSymbol(sh.sym))} reconnu ${Math.round(ms)} ms après l’attaque`), 'ok');
       renderTarget();
       renderStats();
@@ -209,6 +301,11 @@
       const miss = r.missing.map(pc => NAMES[pc]);
       const extra = Array.from(new Set(r.extra.map(nameOf)));
       S.results.push({ ok: false, sym: sh.sym, notes: sh.notes.map(n => n.midi), missing: miss, extra });
+      LOG.ev('shape_fail', {
+        trick: S.trickId, key: S.key, sym: sh.sym, notes: sh.notes.map(n => n.midi), missing: r.missing, extra: r.extra,
+        heard: f.notes.map(n => [n.midi, +n.s.toFixed(1)]), level: +f.level.toFixed(4), onset: +S.onsetT.toFixed(3), a4: +S.det.a4.toFixed(1),
+      });
+      sendClip(S.onsetT, 'rate-' + sh.sym, { ok: false });
       const parts = [];
       if (miss.length) parts.push(`il manque ${miss.join(', ')}`);
       if (extra.length) parts.push(`en trop : ${extra.join(', ')}`);
@@ -256,6 +353,7 @@
       if (!notes.length) return;
       const ch = chordName(notes);
       S.freeLog.unshift({ t: f.t, notes: notes.slice().sort((a, b) => a - b), chord: ch });
+      LOG.ev('heard', { notes: notes.slice().sort((a, b) => a - b), chord: ch ? ch.sym : null, mode: S.mode, at: +f.t.toFixed(3) });
       if (S.freeLog.length > 40) S.freeLog.pop();
       renderFreeLog();
     }
@@ -288,6 +386,7 @@
       const med = sorted[Math.floor(sorted.length / 2)];
       S.tune = [];
       if (Math.abs(med) > 3) S.det.a4 *= Math.pow(2, med / 1200);
+      if (!S.tuneLogAt || performance.now() - S.tuneLogAt > 10000) { S.tuneLogAt = performance.now(); LOG.ev('tune', { a4: +S.det.a4.toFixed(2), med: +med.toFixed(1) }); }
       const cents = 1200 * Math.log2(S.det.a4 / 440);
       $('tuneInfo').textContent = `Accordage de ton piano : La = ${S.det.a4.toFixed(1)} Hz (${cents >= 0 ? '+' : ''}${Math.round(cents)} cents)`;
     }
@@ -296,6 +395,7 @@
   // ---------- Micro ----------
   function onSamples(samples, tEnd) {
     const t0 = performance.now();
+    ringPush(samples, tEnd);
     const frames = S.det.push(samples, tEnd);
     for (const f of frames) onFrame(f);
     const dt = performance.now() - t0;
@@ -305,6 +405,7 @@
       const load = S.cpu.reduce((a, b) => a + b, 0) / S.cpu.length;
       S.cpu = [];
       if (load > 0.6 && S.det.hop < 1024) S.det.hop *= 2;
+      if (!S.cpuLogAt || performance.now() - S.cpuLogAt > 10000) { S.cpuLogAt = performance.now(); LOG.ev('cpu', { load: +load.toFixed(2), hop: S.det.hop }); }
       $('cpuInfo').textContent = `Calcul : ${Math.round(load * 100)} % du temps réel · analyse toutes les ${(S.det.hop / S.ctx.sampleRate * 1000).toFixed(1)} ms`;
     }
   }
@@ -336,6 +437,7 @@
       });
     } catch (e) {
       $('micInfo').innerHTML = '<p class="warn">Accès au micro refusé. Autorise-le dans les réglages du navigateur, puis recharge la page.</p>';
+      LOG.ev('mic_error', { name: e && e.name });
       return;
     }
     try {
@@ -354,6 +456,8 @@
     S.det = new D.Detector(S.ctx.sampleRate, { a4: 440 });
     node.port.onmessage = e => onSamples(e.data.s, e.data.t);
     S.running = true;
+    RING.sr = S.ctx.sampleRate;
+    RING.buf = new Float32Array(Math.round(S.ctx.sampleRate * 8));
 
     const st = stream.getAudioTracks()[0].getSettings ? stream.getAudioTracks()[0].getSettings() : {};
     const off = st.echoCancellation === false && st.noiseSuppression !== true && st.autoGainControl !== true;
@@ -363,6 +467,9 @@
     $('micInfo').innerHTML = `<p><span class="ok">Micro actif</span> · ${Math.round(S.ctx.sampleRate / 100) / 10} kHz · ` +
       (off ? '<span class="ok">traitements « visio » coupés</span>' : '<span class="warn">le navigateur garde des traitements vocaux (moins précis)</span>') +
       (est.length ? ` · ${est.join(', ')}` : '') + '</p>';
+    LOG.ev('mic_start', { sr: S.ctx.sampleRate, settings: st, baseLatency: S.ctx.baseLatency || null, outputLatency: S.ctx.outputLatency || null, off });
+    if (LOG.on && !accessCode() && askAccessCode) askAccessCode();
+    logUi();
     $('micBtn').textContent = 'Micro actif';
     $('micBtn').disabled = true;
     $('micTools').hidden = false;
@@ -425,6 +532,7 @@
         return;
       }
       deltas.sort((a, b) => a - b);
+      LOG.ev('latency_test', { deltas: deltas.map(Math.round), heard: deltas.length, clicks: n, out: Math.round((S.ctx.outputLatency || S.ctx.baseLatency || 0) * 1000) });
       const rt = deltas[Math.floor(deltas.length / 2)];
       const out = (S.ctx.outputLatency || S.ctx.baseLatency || 0) * 1000;
       const inp = out ? Math.max(0, rt - out) : rt / 2;
@@ -576,6 +684,8 @@
       return rest;
     };
     profAbort = new AbortController();
+    LOG.ev('prof_ask', { q: question, voice });
+    let provider = null;
     try {
       const res = await apiFetch('/api/prof', {
         method: 'POST',
@@ -595,6 +705,7 @@
         return;
       }
       if (!res.ok || !res.body) throw new Error('http ' + res.status);
+      provider = res.headers.get('X-Prof-Provider');
       const reader = res.body.getReader();
       const dec = new TextDecoder();
       for (;;) {
@@ -607,7 +718,9 @@
       }
       flush(true);
       S.history.push({ q: question, a: text });
+      LOG.ev('prof_answer', { a: text, provider, voice, textMs: tText != null ? Math.round(tText - t0) : null, voiceMs: tVoice != null ? Math.round(tVoice - t0) : null });
     } catch (e) {
+      LOG.ev('prof_error', { msg: String(e && (e.name || e.message) || e), partial: text.slice(0, 200) });
       if (e && e.name === 'AbortError') { a.textContent = (text || '') + ' (interrompu)'; return; }
       a.className = 'msg err';
       a.textContent = text || fr('Le prof ne répond pas ici. Il ne fonctionne que sur la version en ligne de l’app (Vercel), avec une clé API configurée.');
@@ -656,6 +769,7 @@
     };
     rec.onerror = e => {
       if (e.error === 'no-speech' || e.error === 'aborted') return;
+      LOG.ev('voice_error', { error: e.error });
       const msg = {
         'not-allowed': 'Accès au micro refusé pour la reconnaissance vocale.',
         'service-not-allowed': 'La reconnaissance vocale est désactivée sur cet appareil.',
@@ -672,6 +786,7 @@
     setVoiceState('listen', '');
   }
   function send(text) {
+    if (!V.consumed && text) LOG.ev('voice_heard', { text });
     // un bruit isolé (« euh », une note de piano mal comprise) n'est pas une question
     if (V.consumed || (text.split(/\s+/).length < 2 && text.length < 6)) return;
     V.consumed = true;
@@ -738,10 +853,12 @@
   function rtEvent(ev) {
     switch (ev.type) {
       case 'input_audio_buffer.speech_started':
+        LOG.ev('rt_speech_start');
         rtStatus('Il t’écoute…');
         rtContext(false);
         break;
       case 'input_audio_buffer.speech_stopped':
+        LOG.ev('rt_speech_stop');
         RT.tStop = performance.now();
         RT.latShown = false;
         rtStatus('Il réfléchit…');
@@ -752,6 +869,7 @@
         RT.bubble.textContent = RT.text;
         break;
       case 'response.output_audio_transcript.done':
+        LOG.ev('rt_answer', { a: ev.transcript || RT.text });
         if (RT.bubble) { RT.bubble.textContent = ev.transcript || RT.text; S.history.push({ q: '(à l’oral)', a: RT.bubble.textContent }); }
         RT.bubble = null;
         break;
@@ -759,6 +877,7 @@
         rtStatus('À toi : parle-lui, ou joue.');
         break;
       case 'error':
+        LOG.ev('rt_error', { msg: (ev.error && ev.error.message) || null });
         rtStatus('Erreur du modèle vocal : ' + ((ev.error && ev.error.message) || 'inconnue'));
         break;
       default:
@@ -785,6 +904,7 @@
         if (S.ctx) S.muteUntil = Math.max(S.muteUntil, S.ctx.currentTime + 0.4);
         if (!RT.latShown && RT.tStop != null) {
           RT.latShown = true;
+          LOG.ev('rt_latency', { ms: Math.round(performance.now() - RT.tStop) });
           $('rtLat').textContent = `Tu as fini de parler → il répond à voix haute en ${((performance.now() - RT.tStop) / 1000).toFixed(2).replace('.', ',')} s`;
         }
         if (!RT.speaking) rtStatus('Il parle… (tu peux lui couper la parole)');
@@ -841,6 +961,7 @@
       RT.pc = pc;
       RT.dc = dc;
       RT.on = true;
+      LOG.ev('rt_connected', { gate: $('rtGate').checked });
       btn.textContent = 'Raccrocher';
       btn.dataset.on = '1';
       requestAnimationFrame(rtTick);
@@ -852,6 +973,7 @@
     }
   }
   function rtStop(msg) {
+    if (RT.on || msg) LOG.ev('rt_stop', { msg: msg || null });
     RT.on = false;
     try { if (RT.pc) RT.pc.close(); } catch (e) { /* déjà fermé */ }
     if (RT.mic) RT.mic.stop();
@@ -874,7 +996,21 @@
     toastT = setTimeout(() => { el.hidden = true; }, 3000);
   }
 
+  // ---------- Interrupteur de la boîte noire ----------
+  function initLogToggle() {
+    const t = $('logToggle');
+    if (!t) return;
+    t.addEventListener('change', () => {
+      LOG.on = t.checked;
+      try { localStorage.setItem(LOG_KEY, LOG.on ? 'on' : 'off'); } catch (e) { /* tant pis */ }
+      if (LOG.on) { LOG.blocked = false; if (!accessCode()) askAccessCode(); LOG.ev('log_on'); } else { LOG.queue = []; }
+      logUi();
+    });
+    logUi();
+  }
+
   // ---------- Démarrage ----------
+  initLogToggle();
   fillSelects();
   loadShapes();
   renderFreeLog();
@@ -883,6 +1019,7 @@
   $('latBtn').addEventListener('click', latencyTest);
   document.querySelectorAll('.mode-seg [data-mode]').forEach(b => b.addEventListener('click', () => {
     S.mode = b.dataset.mode;
+    LOG.ev('mode', { mode: S.mode });
     document.querySelectorAll('.mode-seg [data-mode]').forEach(x => x.setAttribute('aria-pressed', x === b ? 'true' : 'false'));
     $('targetPane').hidden = S.mode !== 'target';
     $('freePane').hidden = S.mode !== 'free';

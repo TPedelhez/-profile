@@ -4,6 +4,7 @@
   "type": "module",
   "description": "Truc Jazz : petits trucs de piano jazz, labo d'écoute au micro et prof IA.",
   "dependencies": {
-    "@anthropic-ai/sdk": "1.3.0"
+    "@anthropic-ai/sdk": "1.3.0",
+    "@vercel/blob": "2.8.2"
   }
 }

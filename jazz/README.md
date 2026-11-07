@@ -57,3 +57,21 @@ Tout est dans `tricks.js`, écrit en Do (l'app transpose). Dans les textes,
 | `audio.js` | piano électrique FM, contrebasse, charley (Web Audio) |
 | `app.js` | interface, lecture, clavier, MIDI |
 | `style.css` | le style |
+
+## Labo d'écoute, profs IA et boîte noire
+
+- `ecoute/` : l'app écoute le piano au micro (traitement du signal, `ecoute/detector.js`),
+  vérifie la forme demandée et mesure le délai de reconnaissance.
+- Profs : `api/prof.js` (OpenAI `gpt-6.1-terra`, ou Claude si `PROF_PROVIDER=anthropic`),
+  `api/realtime.js` (ChatGPT temps réel, `gpt-realtime-2.1`, appel WebRTC).
+- Boîte noire : `api/log.js` (événements), `api/clip.js` (~3,5 s de son autour des ratés),
+  `api/sessions.js` (relecture / effacement), stockage privé Vercel Blob.
+- Variables Vercel : `OPENAI_API_KEY`, `ACCESS_CODE`, `BLOB_READ_WRITE_TOKEN`
+  (et `ANTHROPIC_API_KEY` pour Claude).
+
+Analyser les sessions enregistrées (et rejouer les extraits dans le détecteur actuel) :
+
+```sh
+ACCESS_CODE=… node jazz/tools/analyse-sessions.mjs            # toutes les sessions
+ACCESS_CODE=… node jazz/tools/analyse-sessions.mjs <session> --replay
+```
