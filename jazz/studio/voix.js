@@ -86,12 +86,14 @@
     }
     return best && best.score > 2 ? best.sym : null;
   }
-  async function startPiano() {
+  // Sur iPhone et iPad, ouvrir le micro une deuxième fois coupe le premier : l'écoute du piano partage alors le micro de l'appel.
+  const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  async function startPiano(shared) {
     if (PIANO.on) return true;
     try {
       AU.ensure();
       PIANO.ctx = AU.context();
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
+      const stream = shared || await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 } });
       await PIANO.ctx.audioWorklet.addModule('../ecoute/capture-worklet.js');
       const src = PIANO.ctx.createMediaStreamSource(stream);
       const node = new AudioWorkletNode(PIANO.ctx, 'tj-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] });
@@ -100,6 +102,8 @@
       src.connect(node); node.connect(sink); sink.connect(PIANO.ctx.destination);
       PIANO.det = new D.Detector(PIANO.ctx.sampleRate, { a4: 440 });
       PIANO.stream = stream;
+      PIANO.shared = !!shared;
+      PIANO.nodes = [src, node, sink];
       node.port.onmessage = e => {
         const frames = PIANO.det.push(e.data.s, e.data.t);
         for (const f of frames) {
@@ -127,7 +131,10 @@
   }
   function stopPiano() {
     PIANO.on = false;
-    if (PIANO.stream) PIANO.stream.getTracks().forEach(t => t.stop());
+    (PIANO.nodes || []).forEach(n => { try { n.disconnect(); } catch (e) { /* déjà débranché */ } });
+    if (PIANO.nodes && PIANO.nodes[1]) PIANO.nodes[1].port.onmessage = null;
+    PIANO.nodes = null;
+    if (PIANO.stream && !PIANO.shared) PIANO.stream.getTracks().forEach(t => t.stop());
     PIANO.stream = null;
   }
   function journalText(secondes) {
@@ -334,8 +341,9 @@ ${C.NOTATION}`;
       if (!res.ok) { let d = {}; try { d = await res.json(); } catch (e) { /* vide */ } status('OpenAI a refusé la session' + (d.detail ? ' : ' + d.detail : '.')); return; }
       const { value, model } = await res.json();
       RT.model = model;
-      if ($('pianoToggle').checked) await startPiano();
       const ms = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: false, autoGainControl: false } });
+      RT.stream = ms;
+      if ($('pianoToggle').checked) await startPiano(IOS ? ms : null);
       const pc = new RTCPeerConnection();
       RT.audio = RT.audio || Object.assign(document.createElement('audio'), { autoplay: true });
       RT.audio.hidden = true;
@@ -386,7 +394,7 @@ ${C.NOTATION}`;
     try { if (RT.pc) RT.pc.close(); } catch (e) { /* déjà fermé */ }
     if (RT.mic) RT.mic.stop();
     if (RT.audio) RT.audio.srcObject = null;
-    Object.assign(RT, { pc: null, dc: null, mic: null, an: null, msg: null, pendingPlay: null, cont: false });
+    Object.assign(RT, { pc: null, dc: null, mic: null, stream: null, an: null, msg: null, pendingPlay: null, cont: false });
     RT.heard.forEach(m => { if (m.p.textContent === '…') m.p.textContent = '(ta voix)'; });
     RT.heard.clear();
     stopPiano();
@@ -417,7 +425,7 @@ ${C.NOTATION}`;
   ['mini', 'piano', 'log'].forEach(k => $(k + 'Toggle').addEventListener('change', e => setPref(k, e.target.checked)));
   $('pianoToggle').addEventListener('change', async e => {
     if (!RT.on) return;
-    if (e.target.checked) await startPiano(); else stopPiano();
+    if (e.target.checked) await startPiano(IOS ? RT.stream : null); else stopPiano();
   });
   $('callBtn').addEventListener('click', () => { if (RT.on) hangUp('Raccroché.'); else call(); });
   $('composer').addEventListener('submit', e => { e.preventDefault(); const v = $('q').value; $('q').value = ''; sendText(v); });
