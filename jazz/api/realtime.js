@@ -4,7 +4,9 @@
 // variable d'environnement OPENAI_API_KEY dans le projet Vercel.
 // Si ACCESS_CODE est défini, il faut l'envoyer dans l'en-tête x-access-code.
 
+// Deux versions : complète, ou « mini » (environ 3 fois moins chère) quand le corps contient { mini: true }.
 const MODEL = 'gpt-realtime-2.1';
+const MODEL_MINI = 'gpt-realtime-2.1-mini';
 
 const INSTRUCTIONS = `Tu es le prof de piano jazz de l'app « Truc Jazz », en conversation vocale. L'élève a les mains sur son piano acoustique et te parle pendant qu'il joue.
 
@@ -37,6 +39,9 @@ export default async function handler(req, res) {
     res.end(JSON.stringify({ error: 'no_key' }));
     return;
   }
+  let body = req.body;
+  if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
+  const model = body && body.mini === true ? MODEL_MINI : MODEL;
   try {
     const r = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
       method: 'POST',
@@ -48,12 +53,14 @@ export default async function handler(req, res) {
         expires_after: { anchor: 'created_at', seconds: 600 },
         session: {
           type: 'realtime',
-          model: MODEL,
+          model,
           instructions: INSTRUCTIONS,
           audio: {
             input: {
               // pas de réduction de bruit : on veut qu'il entende aussi le piano
               noise_reduction: null,
+              // transcription de ce que dit l'élève, pour l'afficher dans le fil
+              transcription: { model: 'gpt-4o-mini-transcribe', language: 'fr' },
               // fin de tour « sémantique », patiente : il attend que tu aies fini ta phrase
               turn_detection: { type: 'semantic_vad', eagerness: 'low' },
             },
@@ -70,7 +77,7 @@ export default async function handler(req, res) {
     }
     const d = JSON.parse(text);
     res.statusCode = 200;
-    res.end(JSON.stringify({ value: d.value, expires_at: d.expires_at, model: MODEL }));
+    res.end(JSON.stringify({ value: d.value, expires_at: d.expires_at, model }));
   } catch (e) {
     res.statusCode = 502;
     res.end(JSON.stringify({ error: 'network' }));

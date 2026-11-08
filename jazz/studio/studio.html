@@ -3,127 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&family=Kalam:wght@700&family=Libre+Franklin:wght@400;500;600;700&display=swap">
-<style>
-  /* Layout : une conversation en colonne ; chaque exemple est une feuille de partition posée sur le pupitre, avec le clavier dessous. */
-  :root {
-    --paper: #F2F1ED;
-    --card: #FBFAF7;
-    --ink: #19181C;
-    --ink-2: #5C5861;
-    --line: #D6D2C9;
-    --felt: #A3232E;
-    --felt-ink: #FFFFFF;
-    --me: #E4E1DA;
-    --lh: #2D5B9A;
-    --rh: #A3232E;
-    /* Objets du piano et de la partition : identiques dans les deux thèmes */
-    --sheet: #FBFAF5;
-    --sheet-ink: #19181C;
-    --dock: #131215;
-    --dock-ink: #EEEAE3;
-    --ivory: #FAF8F2;
-    --ivory-shade: #D7D2C6;
-    --ebony: #16151A;
-    --k-lh: #3A6DB5;
-    --k-rh: #C02F3E;
-    --k-bass: #6E685E;
-    --font-display: 'Big Shoulders Display', 'Arial Narrow', Impact, sans-serif;
-    --font-body: 'Libre Franklin', 'Helvetica Neue', Arial, sans-serif;
-    --font-hand: 'Kalam', 'Segoe Print', 'Bradley Hand', cursive;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --paper: #121114; --card: #1A191D; --ink: #EDE9E2; --ink-2: #A8A3AC; --line: #322F37;
-      --felt: #E8656F; --felt-ink: #1B0A0C; --me: #26242B; --lh: #84ADEB; --rh: #E8656F;
-      color-scheme: dark;
-    }
-  }
-  :root[data-theme="dark"] {
-    --paper: #121114; --card: #1A191D; --ink: #EDE9E2; --ink-2: #A8A3AC; --line: #322F37;
-    --felt: #E8656F; --felt-ink: #1B0A0C; --me: #26242B; --lh: #84ADEB; --rh: #E8656F;
-    color-scheme: dark;
-  }
-  *, *::before, *::after { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.55; }
-  button, textarea, input { font: inherit; color: inherit; }
-  :focus-visible { outline: 2px solid var(--felt); outline-offset: 2px; }
-
-  .app { display: flex; flex-direction: column; min-height: 100%; max-width: 820px; margin: 0 auto;
-    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0; }
-  header.top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-block: 14px 10px; border-bottom: 1px solid var(--line); }
-  .brand { font-family: var(--font-display); font-weight: 900; font-size: 28px; line-height: 1; text-transform: uppercase; margin-right: auto; }
-  .brand b { color: var(--felt); }
-  .brand small { display: block; font-family: var(--font-body); font-size: 12px; font-weight: 600; text-transform: none; color: var(--ink-2); margin-top: 4px; letter-spacing: 0; }
-  .pill { border: 1px solid var(--line); background: transparent; border-radius: 999px; padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; }
-  .pill:hover { border-color: var(--ink-2); }
-
-  #thread { flex: 1; display: flex; flex-direction: column; gap: 18px; padding-block: 18px 12px; }
-  .msg { display: grid; gap: 12px; min-width: 0; }
-  .msg.me { justify-items: end; }
-  .msg.me .bubble { background: var(--me); border-radius: 14px 14px 4px 14px; padding: 10px 14px; max-width: 85%; }
-  .msg.me .bubble p { margin: 0; white-space: pre-wrap; }
-  .msg.prof .bubble { max-width: 68ch; }
-  .bubble p { margin: 0 0 10px; }
-  .bubble p:last-child { margin-bottom: 0; }
-  .bubble ul, .bubble ol { margin: 0 0 10px; padding-left: 22px; }
-  .bubble code { font-size: 0.92em; background: var(--me); border-radius: 4px; padding: 0 4px; }
-  .sym { font-family: var(--font-hand); font-weight: 700; font-size: 1.1em; white-space: nowrap; }
-  .thinking { color: var(--ink-2); font-style: italic; }
-  .cards { display: grid; gap: 14px; min-width: 0; }
-  .cards:empty { display: none; }
-
-  /* Carte musicale */
-  .card { margin: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); min-width: 0; }
-  .card-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
-  .card-n { font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--felt); white-space: nowrap; }
-  .card-t { font-family: var(--font-display); font-weight: 800; font-size: 20px; line-height: 1.05; text-transform: uppercase; flex: 1; min-width: 0; text-wrap: balance; }
-  .play { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 7px 14px 7px 10px; background: var(--k-rh); color: #FFFFFF; font-weight: 700; font-size: 14px; cursor: pointer; flex: 0 0 auto; }
-  .play.on { background: var(--ink); color: var(--paper); }
-  .sheet { background: var(--sheet); color: var(--sheet-ink); padding: 6px 8px 2px; overflow-x: auto; border-top: 1px solid var(--line); }
-  .sheet svg { display: block; }
-  .steps { display: flex; gap: 8px; overflow-x: auto; padding: 10px 12px; }
-  .step { flex: 0 0 auto; display: grid; gap: 2px; text-align: left; border: 1px solid var(--line); background: transparent; border-radius: 8px; padding: 6px 10px; cursor: pointer; min-width: 84px; }
-  .step .sym { font-size: 20px; line-height: 1.1; }
-  .step-notes { font-size: 13px; font-weight: 600; white-space: nowrap; }
-  .step-notes sub { font-size: 10px; color: var(--ink-2); vertical-align: baseline; margin-left: 2px; margin-right: 2px; }
-  .step.sel { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }
-  .step.now { border-color: var(--felt); box-shadow: inset 0 0 0 1px var(--felt); }
-  .card-x { margin: 0; padding: 0 12px 12px; font-size: 14px; color: var(--ink-2); }
-
-  .dockk { background: var(--dock); padding: 0 10px 10px; }
-  .felt { height: 4px; background: linear-gradient(#8C1C26, #B5313C); border-radius: 1px; margin-bottom: 0; }
-  .kbw { overflow-x: auto; }
-  .kb { position: relative; height: 104px; min-width: calc(var(--nw) * 24px); user-select: none; -webkit-user-select: none; touch-action: pan-x; }
-  .k { position: absolute; top: 0; display: flex; align-items: flex-end; justify-content: center; cursor: pointer; -webkit-tap-highlight-color: transparent; }
-  .k.w { left: calc(var(--i) * 100% / var(--nw)); width: calc(100% / var(--nw)); bottom: 0; background: linear-gradient(var(--ivory) 82%, var(--ivory-shade));
-    border: 1px solid rgba(0, 0, 0, 0.55); border-top: 0; border-radius: 0 0 5px 5px; }
-  .k.b { left: calc((var(--i) - 0.31) * 100% / var(--nw)); width: calc(0.62 * 100% / var(--nw)); height: 61%; z-index: 2;
-    background: linear-gradient(#2E2C33, var(--ebony) 28%); border-radius: 0 0 4px 4px; }
-  .k.w[data-m="60"]::after { content: ''; position: absolute; top: 7px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; background: rgba(0, 0, 0, 0.22); }
-  .k .lab { display: grid; justify-items: center; margin-bottom: 6px; font-size: 10px; font-weight: 700; line-height: 1.05; color: #FFFFFF; pointer-events: none; text-align: center; }
-  .k .lab i { font-style: normal; font-weight: 600; opacity: 0.85; }
-  .k.on-L { background: var(--k-lh); }
-  .k.on-R { background: var(--k-rh); }
-  .k.on-B { background: var(--k-bass); }
-
-  /* Suggestions et saisie */
-  .ideas { display: flex; flex-wrap: wrap; gap: 8px; padding-block: 2px 12px; }
-  .ideas button { border: 1px solid var(--line); background: var(--card); border-radius: 999px; padding: 7px 12px; font-size: 14px; cursor: pointer; text-align: left; }
-  .ideas button:hover { border-color: var(--ink); }
-  .dock-in { position: sticky; bottom: 0; background: var(--paper); padding-block: 10px calc(12px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid var(--line); z-index: 5; }
-  #composer { display: flex; gap: 8px; align-items: flex-end; }
-  #q { flex: 1; min-width: 0; resize: none; border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--card); line-height: 1.4; max-height: 160px; }
-  #q:focus { outline: none; border-color: var(--ink); }
-  .send { border: 0; border-radius: 12px; padding: 10px 16px; background: var(--felt); color: var(--felt-ink); font-weight: 700; cursor: pointer; }
-  .send:disabled { opacity: 0.5; cursor: default; }
-  .stopb { border: 1px solid var(--ink); border-radius: 12px; padding: 10px 16px; background: transparent; font-weight: 700; cursor: pointer; }
-  .opts { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; margin-top: 8px; font-size: 13px; color: var(--ink-2); }
-  .opts label { display: inline-flex; align-items: center; gap: 6px; }
-  #status { min-height: 1.2em; }
-  [hidden] { display: none !important; }
-  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
-</style>
+<link rel="stylesheet" href="studio.css">
 
 <div class="app">
   <header class="top">
@@ -158,4 +38,5 @@
 <script src="theory.js"></script>
 <script src="tricks.js"></script>
 <script src="audio.js"></script>
+<script src="cards.js"></script>
 <script src="studio.js"></script>

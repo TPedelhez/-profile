@@ -83,3 +83,13 @@ sur son propre compte Claude (pas d'API). Claude dispose de trois outils de la p
 `montrer` (partition abcjs + clavier + son), `voicings` (notes exactes d'un accord, via `theory.js`)
 et `trucs` (la bibliothèque). `studio.html` est au format artifact (sans `<html>`/`<head>`) ;
 la publier avec `theory.js`, `tricks.js`, `audio.js` et `studio/studio.js`, et la capacité `sample`.
+
+## Studio vocal (conversation en direct)
+
+`studio/index.html` (servi sur `/studio/`) : on parle au prof comme au téléphone (OpenAI Realtime en WebRTC,
+clé éphémère via `api/realtime.js`, protégée par `ACCESS_CODE`). Il répond à voix haute et appelle les outils de la page :
+`montrer` (partition + clavier + son, joué quand il a fini sa phrase), `voicings`, `trucs`, et `ecouter`
+(ce que le détecteur a reconnu au micro si « Il écoute aussi mon piano » est coché). Ta voix est transcrite dans le fil.
+Réglages : version mini (environ 3 fois moins chère), boîte noire (`api/log.js`, app `studio-vocal`).
+L'appel raccroche seul après 4 minutes sans échange. Les cartes musicales (`studio/cards.js`, `studio/studio.css`)
+sont partagées avec le studio Claude.

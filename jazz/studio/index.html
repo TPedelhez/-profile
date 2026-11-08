@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Studio vocal · Truc Jazz</title>
+  <meta name="description" content="Parle piano jazz en direct avec le prof : il te répond à voix haute, t'affiche la partition et le clavier, et écoute ton piano.">
+  <meta name="theme-color" content="#131215">
+  <script>if (!location.pathname.endsWith('/')) location.replace(location.pathname + '/' + location.search + location.hash);</script>
+  <link rel="icon" href="../icon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&family=Kalam:wght@700&family=Libre+Franklin:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="studio.css">
+  <style>
+    /* Panneau d'appel : le gros bouton reste sous le pouce, en bas de l'écran */
+    .callrow { display: flex; align-items: center; gap: 12px; }
+    .call { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 999px; padding: 12px 20px 12px 16px;
+      background: var(--felt); color: var(--felt-ink); font-weight: 700; font-size: 16px; cursor: pointer; }
+    .call::before { content: ''; width: 10px; height: 10px; border-radius: 50%; background: currentColor; opacity: 0.85; }
+    .call[data-on] { background: var(--ink); color: var(--paper); }
+    .call[data-on]::before { background: #3CC46B; opacity: 1; animation: live 1.6s ease-in-out infinite; }
+    .call:disabled { opacity: 0.55; cursor: default; }
+    @keyframes live { 50% { opacity: 0.35; } }
+    .callinfo { display: grid; gap: 2px; min-width: 0; font-size: 13px; color: var(--ink-2); line-height: 1.35; }
+    #status { color: var(--ink); font-weight: 600; }
+    #lat:empty { display: none; }
+    #thread:not(.live) ~ .dock-in #ideas { display: none; }
+    #ideas { flex-wrap: nowrap; overflow-x: auto; padding-block: 10px 2px; scrollbar-width: none; }
+    #ideas button { flex: 0 0 auto; }
+    #composer { margin-top: 10px; }
+    .msg.me.voice .bubble { background: transparent; border: 1px dashed var(--line); color: var(--ink-2); }
+    .msg.me.voice.heard .bubble { border-style: solid; color: var(--ink); background: var(--me); }
+    .intro .bubble p + p { margin-top: 8px; }
+    .top nav { display: flex; gap: 8px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div class="brand">Studio <b>vocal</b><small>Parle piano jazz en direct : il te répond, te montre les notes et écoute ton piano.</small></div>
+      <nav>
+        <a class="pill" href="../">Les trucs</a>
+        <a class="pill" href="../ecoute/">Labo d’écoute</a>
+      </nav>
+    </header>
+
+    <main id="thread" aria-live="polite">
+      <article class="msg prof intro">
+        <div class="bubble">
+          <p>Salut ! Appuie sur « Appeler le prof » et parle-moi normalement, les mains sur le clavier. Je te réponds à voix haute et je t’affiche les exemples ici, avec la partition et le clavier.</p>
+          <p>Coche « Il écoute aussi mon piano » pour que je sache exactement quelles notes tu joues. Pour commencer, voici un II-V-I en shells :</p>
+        </div>
+        <div class="cards" id="introCards"></div>
+      </article>
+    </main>
+
+    <div class="dock-in">
+      <div class="callrow">
+        <button class="call" id="callBtn" type="button">Appeler le prof</button>
+        <div class="callinfo">
+          <span id="status" role="status">Prêt. Pose ton téléphone sur le pupitre.</span>
+          <span id="lat"></span>
+        </div>
+      </div>
+      <div class="ideas" id="ideas">
+        <button type="button" data-say="Montre-moi un II-V-I en fa avec des voicings sans fondamentale.">II-V-I sans fondamentale</button>
+        <button type="button" data-say="Écoute ce que je viens de jouer et dis-moi si c'était juste.">Écoute ce que j’ai joué</button>
+        <button type="button" data-say="Apprends-moi une petite phrase blues en do.">Une phrase blues</button>
+        <button type="button" data-say="Quelle est la différence entre ré mineur sept, ré sept et ré majeur sept ? Montre-les.">Dm7, D7, Dmaj7</button>
+      </div>
+      <form id="composer" autocomplete="off">
+        <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Écrire au prof</label>
+        <textarea id="q" rows="1" placeholder="Ou écris-lui…"></textarea>
+        <button class="send" type="submit">Envoyer</button>
+      </form>
+      <div class="opts">
+        <label for="pianoToggle"><input type="checkbox" id="pianoToggle"> Il écoute aussi mon piano</label>
+        <label for="miniToggle"><input type="checkbox" id="miniToggle"> Version mini (≈ 3× moins chère)</label>
+        <label for="logToggle"><input type="checkbox" id="logToggle"> Boîte noire</label>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/abcjs@6.7.1/dist/abcjs-basic-min.js"></script>
+  <script src="../theory.js"></script>
+  <script src="../tricks.js"></script>
+  <script src="../audio.js"></script>
+  <script src="../ecoute/detector.js"></script>
+  <script src="cards.js"></script>
+  <script src="voix.js"></script>
+</body>
+</html>
