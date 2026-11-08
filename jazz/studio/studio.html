@@ -142,12 +142,13 @@
     </div>
     <form id="composer" autocomplete="off">
       <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Ta question</label>
-      <textarea id="q" rows="1" placeholder="Pose ta question sur le piano jazz…" disabled></textarea>
+      <textarea id="q" rows="1" placeholder="Pose ta question (ou dicte-la avec le micro du clavier)…" disabled></textarea>
       <button class="send" id="sendBtn" type="submit" disabled>Envoyer</button>
       <button class="stopb" id="stopBtn" type="button" hidden>Stop</button>
     </form>
     <div class="opts">
-      <label for="quick"><input type="checkbox" id="quick"> Réponse rapide (moins réfléchie)</label>
+      <label for="speak" id="speakLbl"><input type="checkbox" id="speak" checked> Lire les réponses à voix haute</label>
+      <label for="deep"><input type="checkbox" id="deep"> Réfléchir plus (plus lent)</label>
       <span id="status" role="status"></span>
     </div>
   </div>

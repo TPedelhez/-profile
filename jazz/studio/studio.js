@@ -428,6 +428,63 @@ Exemple de phrase : md = "A4:0.5 C5 E5 D5 C5 A4 G4:1 E4:4", mg = "[Am7]A2+G3+C4:
 
 Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'accords en lettres (Dm7, G7). Réponses courtes (100 à 200 mots) sauf si l'élève demande plus. Pas de titres. Finis souvent par une petite chose à essayer tout de suite au piano.`;
 
+  // ---------- Voix : Claude lit ses réponses à voix haute ----------
+  const SPOKEN_ROOT = { C: 'do', D: 'ré', E: 'mi', F: 'fa', G: 'sol', A: 'la', B: 'si' };
+  const SPOKEN_Q = [
+    [/^maj9$/, 'majeur neuf'], [/^maj7#11$|^maj7♯11$/, 'majeur sept quarte augmentée'], [/^maj7$/, 'majeur sept'], [/^m7b5$|^m7♭5$|^ø$/, 'demi-diminué'],
+    [/^m\(maj7\)$|^mMaj7$/, 'mineur majeur sept'], [/^m9$/, 'mineur neuf'], [/^m11$/, 'mineur onze'], [/^m7$/, 'mineur sept'], [/^m6$/, 'mineur six'],
+    [/^m$/, 'mineur'], [/^dim7$|^°7$/, 'diminué sept'], [/^7sus4$/, 'sept sus quatre'], [/^7alt$/, 'sept altéré'], [/^7b9$|^7♭9$/, 'sept bémol neuf'],
+    [/^7#9$|^7♯9$/, 'sept dièse neuf'], [/^7#11$|^7♯11$/, 'sept quarte augmentée'], [/^6\/9$/, 'six neuf'], [/^13$/, 'treize'], [/^9$/, 'neuf'], [/^7$/, 'sept'], [/^6$/, 'six'],
+  ];
+  function spokenChord(sym) {
+    const m = /^([A-G])(b|#|♭|♯)?(.*)$/.exec(sym);
+    if (!m) return sym;
+    let out = SPOKEN_ROOT[m[1]] + (m[2] ? (/b|♭/.test(m[2]) ? ' bémol' : ' dièse') : '');
+    const q = SPOKEN_Q.find(([re]) => re.test(m[3]));
+    return out + (m[3] ? ' ' + (q ? q[1] : m[3]) : ' majeur');
+  }
+  function spokenText(t) {
+    return t.replace(/```[\s\S]*?```/g, ' ').replace(/[*_`#>]/g, '').replace(/^\s*([-•]|\d+[.)])\s+/gm, '')
+      .replace(SYM_RE, (x, sym) => spokenChord(sym))
+      .replace(/♭(\d+)/g, 'bémol $1').replace(/♯(\d+)/g, 'dièse $1').replace(/♭/g, ' bémol').replace(/♯/g, ' dièse')
+      .replace(/\s+/g, ' ').trim();
+  }
+  const VOICE = {
+    ok: 'speechSynthesis' in window,
+    voice: null,
+    spoken: 0,
+    pick() {
+      if (!this.ok) return;
+      const vs = speechSynthesis.getVoices().filter(v => /^fr(-|_|$)/i.test(v.lang));
+      const score = v => (/premium|enhanced|natural|neural/i.test(v.name) ? 4 : 0) + (/google/i.test(v.name) ? 3 : 0) + (/am[ée]lie|thomas|audrey|aur[ée]lie|marie|daniel/i.test(v.name) ? 2 : 0) + (/fr-FR/i.test(v.lang) ? 1 : 0);
+      this.voice = vs.sort((a, b) => score(b) - score(a))[0] || null;
+    },
+    unlock() { if (!this.ok) return; this.pick(); const u = new SpeechSynthesisUtterance(' '); u.volume = 0; speechSynthesis.speak(u); },
+    say(t) {
+      const txt = spokenText(t);
+      if (!this.ok || !txt) return;
+      const u = new SpeechSynthesisUtterance(txt);
+      u.lang = 'fr-FR';
+      if (this.voice) u.voice = this.voice;
+      u.rate = 1.07;
+      speechSynthesis.speak(u);
+    },
+    // lit chaque phrase dès qu'elle est complète
+    feed(text, final) {
+      if (!this.ok || !$('speak').checked) return;
+      for (;;) {
+        const rest = text.slice(this.spoken);
+        const m = final ? /^[\s\S]+$/.exec(rest) : /^[\s\S]*?[.!?…:](\s|$)/.exec(rest);
+        if (!m || !m[0].trim()) break;
+        this.spoken += m[0].length;
+        this.say(m[0]);
+        if (final) break;
+      }
+    },
+    reset() { this.spoken = 0; if (this.ok) speechSynthesis.cancel(); },
+  };
+  if (VOICE.ok) { VOICE.pick(); speechSynthesis.onvoiceschanged = () => VOICE.pick(); }
+
   // ---------- Conversation ----------
   const STORE = 'tj-studio:v1';
   let turns = []; // {role, text, cards:[spec]}
@@ -485,6 +542,8 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
     if (!text || busy) return;
     AU.ensure(); // le geste de l'élève autorise le son pour la suite
     stop();
+    VOICE.reset();
+    if ($('speak').checked) VOICE.unlock();
     turns.push({ role: 'user', text });
     save();
     $('ideas').hidden = true;
@@ -500,12 +559,14 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
     setStatus('');
     let finalText = '';
     try {
-      const opts = { signal: ctl.signal, cache: false, onText: ({ text: t }) => { finalText = t; m.textEl.innerHTML = md(t); } };
+      const opts = { signal: ctl.signal, cache: false, onText: ({ text: t }) => { finalText = t; m.textEl.innerHTML = md(t); VOICE.feed(t, false); } };
       if (tools) opts.tools = TOOLS;
-      if ($('quick').checked) opts.modelTier = 'quick';
+      // rapide par défaut : pas de réflexion préalable, chaque aller-retour d'outil prend environ une seconde
+      opts.modelTier = $('deep').checked ? 'default' : 'quick';
       const r = await sample(history(), opts);
       finalText = r.text;
       m.textEl.innerHTML = md(r.text);
+      VOICE.feed(r.text, true);
       if (r.truncated) setStatus('Réponse coupée : demande-lui la suite.');
       if (!tools) parseFallbackCards(m, r.text);
     } catch (e) {
@@ -557,7 +618,13 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
     $('composer').addEventListener('submit', e => { e.preventDefault(); const v = $('q').value; $('q').value = ''; autosize(); send(v); });
     $('q').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); } });
     $('q').addEventListener('input', autosize);
-    $('stopBtn').addEventListener('click', () => { if (busy) busy.abort(); });
+    $('stopBtn').addEventListener('click', () => { if (busy) busy.abort(); VOICE.reset(); });
+    // préférences gardées sur cet appareil
+    ['deep', 'speak'].forEach(id => {
+      try { const v = localStorage.getItem('tj-studio:' + id); if (v != null) $(id).checked = v === '1'; } catch (e) { /* rien */ }
+      $(id).addEventListener('change', () => { try { localStorage.setItem('tj-studio:' + id, $(id).checked ? '1' : '0'); } catch (e) { /* rien */ } if (id === 'speak' && !$(id).checked) VOICE.reset(); });
+    });
+    if (!VOICE.ok) $('speakLbl').hidden = true;
     $('newBtn').addEventListener('click', () => { if (busy) busy.abort(); stop(); turns = []; save(); renderAll(); setStatus('Nouvelle conversation.'); });
     document.querySelectorAll('[data-ask]').forEach(b => b.addEventListener('click', () => { $('q').value = b.dataset.ask; send(b.dataset.ask); $('q').value = ''; }));
   }
