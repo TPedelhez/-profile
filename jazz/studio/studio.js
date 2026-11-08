@@ -415,7 +415,7 @@
 
   const RULES = `Tu es le prof de piano jazz du « Studio Truc Jazz ». Tu discutes avec un élève qui apprend le jazz sur le moment, par petits trucs, sans programme. Tu tutoies, en français, ton chaleureux et concret, phrases courtes.
 
-Règle d'or : dès que tu parles de notes concrètes (accord, voicing, gamme, phrase, grille), appelle l'outil « montrer » pour l'afficher (partition + clavier + son), puis parles-en en le citant (« l'exemple 2 »). Un exemple court et juste vaut mieux qu'une longue explication. Pour les notes d'un voicing, appelle d'abord « voicings » : il donne les notes exactes. Pour un truc de la bibliothèque, appelle « trucs ».
+Règle d'or : dès que tu cites des notes ou un accord, même pour une question simple (accord, voicing, gamme, phrase, grille), appelle l'outil « montrer » pour l'afficher (partition + clavier + son), puis parles-en en le citant (« l'exemple 2 »). Un exemple court et juste vaut mieux qu'une longue explication. Pour les notes d'un voicing, appelle d'abord « voicings » : il donne les notes exactes. Pour un truc de la bibliothèque, appelle « trucs ».
 
 Notation Truc Jazz pour « montrer » (une chaîne par main, md / mg / basse) :
 - une note = lettre + altération + octave : C4 est le do du milieu ; Bb3, F#4, Eb2. Dans la notation, toujours des lettres.
@@ -523,13 +523,14 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
 
   // Ce que Claude relit des échanges passés (il ne garde rien entre deux appels)
   function history() {
-    const h = turns.slice(-16).map(t => ({
+    const intro = { role: 'assistant', text: INTRO_TEXT, cards: [DEMO] };
+    const h = [intro].concat(turns.slice(-16)).map(t => ({
       role: t.role,
       content: t.role === 'assistant' && t.cards && t.cards.length
         ? (t.text || '(exemples)') + '\n\n[Exemples affichés dans ce message : ' + t.cards.map((c, i) => `${i + 1}. ${c.titre} — ${['md', 'mg', 'basse'].filter(k => c[k]).map(k => `${k}: ${c[k]}`).join(' ; ')}`).join(' | ') + ']'
         : t.text || '…',
     }));
-    while (h.length && h[0].role !== 'user') h.shift();
+    if (turns.length > 16) while (h.length > 1 && h[1].role !== 'user') h.splice(1, 1);
     const rules = tools ? RULES : RULES + '\n\nIci tu n’as pas d’outils : pour chaque exemple, écris un bloc ```exemple {"titre": "…", "mg": "…", "md": "…", "tempo": 100}``` (JSON valide, notation Truc Jazz). La page l’affiche avec partition, clavier et son.';
     return [{ role: 'user', content: rules }].concat(h);
   }
@@ -600,6 +601,7 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
   }
 
   // ---------- Démarrage ----------
+  const INTRO_TEXT = 'Salut ! Pose-moi n’importe quelle question sur le piano jazz. Quand je parle de notes, je te les montre sur la portée et le clavier, et tu peux les écouter. Par exemple, voici le II-V-I, l’enchaînement le plus joué du jazz :';
   const DEMO = {
     titre: 'II-V-I en Do, en shells', mg: '[Dm7]D3+F3+C4:4 [G7]G2+F3+B3:4 [Cmaj7]C3+E3+B3:8', tempo: 80,
     explication: 'Touche un accord pour l’entendre seul, ou Écouter pour l’enchaînement.',
@@ -607,7 +609,7 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
   function renderAll() {
     $('thread').innerHTML = '';
     if (!turns.length) {
-      const m = msgEl('assistant', 'Salut ! Pose-moi n’importe quelle question sur le piano jazz. Quand je parle de notes, je te les montre sur la portée et le clavier, et tu peux les écouter. Par exemple, voici le II-V-I, l’enchaînement le plus joué du jazz :', [DEMO]);
+      const m = msgEl('assistant', INTRO_TEXT, [DEMO]);
       m.el.classList.add('intro');
     }
     turns.forEach(t => msgEl(t.role, t.text, t.cards));
