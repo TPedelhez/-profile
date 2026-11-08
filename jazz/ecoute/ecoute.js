@@ -356,6 +356,7 @@
       LOG.ev('heard', { notes: notes.slice().sort((a, b) => a - b), chord: ch ? ch.sym : null, mode: S.mode, at: +f.t.toFixed(3) });
       if (S.freeLog.length > 40) S.freeLog.pop();
       renderFreeLog();
+      PONT.soon();
     }
   }
   function renderFreeLog() {
@@ -471,6 +472,7 @@
     if (LOG.on && !accessCode() && askAccessCode) askAccessCode();
     logUi();
     $('micBtn').textContent = 'Micro actif';
+    if ($('pontToggle').checked) PONT.send();
     $('micBtn').disabled = true;
     $('micTools').hidden = false;
     setVerdict('Plaque la forme : toutes les notes ensemble.');
@@ -1009,8 +1011,45 @@
     logUi();
   }
 
+  // ---------- Pont vers le studio Claude (artefact sans micro) ----------
+  // Ce que le Labo reconnaît part sur le site (api/pont) ; l'artefact le relit par le connecteur Vercel.
+  const PONT = {
+    t: null, beat: null, busy: false, again: false, sent: 0,
+    on() { return $('pontToggle').checked && S.running; },
+    soon() { if (!this.on()) return; clearTimeout(this.t); this.t = setTimeout(() => this.send(), 400); },
+    async send() {
+      if (!this.on()) return;
+      if (this.busy) { this.again = true; return; }
+      this.busy = true;
+      const now = S.ctx.currentTime;
+      const journal = S.freeLog.filter(e => now - e.t <= 90).map(e => ({ at: Date.now() - (now - e.t) * 1000, notes: e.notes, chord: e.chord ? e.chord.sym : null }));
+      try {
+        const r = await fetch('../api/pont', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-access-code': accessCode() }, body: JSON.stringify({ code: accessCode(), sentAt: Date.now(), listening: true, journal }) });
+        if (r.status === 401) { $('pontInfo').textContent = 'Code d’accès refusé : décoche puis recoche pour le retaper.'; }
+        else if (r.ok) { this.sent++; $('pontInfo').textContent = `Envoyé au studio Claude (${journal.length} accord${journal.length > 1 ? 's' : ''} des 90 dernières secondes).`; }
+        else $('pontInfo').textContent = 'Le site n’a pas pu ranger l’envoi, il réessaiera au prochain accord.';
+      } catch (e) { $('pontInfo').textContent = 'Pas de réseau : il réessaiera au prochain accord.'; }
+      this.busy = false;
+      if (this.again) { this.again = false; this.send(); }
+    },
+    toggle() {
+      const on = $('pontToggle').checked;
+      try { localStorage.setItem('truc-jazz:pont', on ? '1' : '0'); } catch (e) { /* tant pis */ }
+      clearInterval(this.beat);
+      if (!on) { $('pontInfo').textContent = ''; return; }
+      if (!accessCode()) askAccessCode();
+      if (!S.running) { $('pontInfo').textContent = 'Active le micro (en haut) : l’envoi commence dès qu’il écoute.'; }
+      // signe de vie : l'artefact sait que le Labo écoute, même quand tu ne joues pas
+      this.beat = setInterval(() => this.send(), 20000);
+      this.send();
+    },
+  };
+
   // ---------- Démarrage ----------
   initLogToggle();
+  try { $('pontToggle').checked = localStorage.getItem('truc-jazz:pont') === '1'; } catch (e) { /* rien */ }
+  $('pontToggle').addEventListener('change', () => PONT.toggle());
+  if ($('pontToggle').checked) PONT.toggle();
   fillSelects();
   loadShapes();
   renderFreeLog();

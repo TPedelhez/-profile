@@ -79,10 +79,19 @@ ACCESS_CODE=… node jazz/tools/analyse-sessions.mjs <session> --replay
 ## Studio (conversation avec Claude)
 
 `studio/` est une page publiée comme artifact sur claude.ai : on y discute de piano avec Claude,
-sur son propre compte Claude (pas d'API). Claude dispose de trois outils de la page :
-`montrer` (partition abcjs + clavier + son), `voicings` (notes exactes d'un accord, via `theory.js`)
-et `trucs` (la bibliothèque). `studio.html` est au format artifact (sans `<html>`/`<head>`) ;
-la publier avec `theory.js`, `tricks.js`, `audio.js` et `studio/studio.js`, et la capacité `sample`.
+sur son propre compte Claude (pas d'API), en écrivant ou en dictant avec le micro du clavier du téléphone.
+Claude dispose des outils de la page : `montrer` (partition abcjs + clavier + son), `jouer` (une note,
+une résolution, des étapes d'un exemple, notes égrenées ; la voix lit ce qui précède, le son part, Claude
+reprend quand c'est fini), `voicings`, `trucs` et `ecouter`.
+
+L'artifact n'a pas de micro : pour qu'il sache ce que tu joues, ouvre le Labo d'écoute (`ecoute/`),
+active le micro et coche « Envoyer au studio Claude ». Le Labo envoie ce qu'il reconnaît à `api/pont.js`
+(Vercel Blob) ; l'artifact le relit par le connecteur Vercel de claude.ai (`web_fetch_vercel_url`) et
+le joint à chaque question (« Mon piano » coché, code d'accès tapé une fois).
+
+`studio.html` est au format artifact (sans `<html>`/`<head>`) ; la publier avec `theory.js`, `tricks.js`,
+`audio.js`, `studio/cards.js`, `studio/studio.css` et `studio/studio.js`, et les capacités
+`sample` et `mcp` (`{servers: [{server: "Vercel", tools: ["web_fetch_vercel_url"]}]}`).
 
 ## Studio vocal (conversation en direct)
 

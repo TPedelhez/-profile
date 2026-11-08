@@ -130,3 +130,11 @@ a.pill { color: var(--ink); }
 .card-m { margin: 0; padding: 0 12px 10px; font-size: 13px; font-weight: 600; color: var(--ink); background: var(--card); }
 .card.playing { border-color: var(--felt); box-shadow: 0 0 0 1px var(--felt); }
 .msg.prof .bubble:has(> p:only-child:empty) { display: none; }
+
+/* Ce que le Labo a entendu au piano, envoyé avec la question */
+.msg.me .chip { margin: -6px 0 0; font-size: 12px; color: var(--ink-2); max-width: 85%; text-align: right; }
+.opts a { color: inherit; }
+#codeRow { display: inline-flex; gap: 6px; align-items: center; }
+#codeIn { border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; background: var(--card); width: 160px; }
+#pianoInfo { flex-basis: 100%; }
+#pianoInfo:empty { display: none; }

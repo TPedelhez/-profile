@@ -22,13 +22,16 @@
     </div>
     <form id="composer" autocomplete="off">
       <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Ta question</label>
-      <textarea id="q" rows="1" placeholder="Pose ta question (ou dicte-la avec le micro du clavier)…" disabled></textarea>
+      <textarea id="q" rows="1" placeholder="Écris, ou dicte avec le micro du clavier…" disabled></textarea>
       <button class="send" id="sendBtn" type="submit" disabled>Envoyer</button>
       <button class="stopb" id="stopBtn" type="button" hidden>Stop</button>
     </form>
     <div class="opts">
       <label for="speak" id="speakLbl"><input type="checkbox" id="speak" checked> Lire les réponses à voix haute</label>
-      <label for="deep"><input type="checkbox" id="deep"> Réfléchir plus (plus lent)</label>
+      <label for="piano" id="pianoLbl"><input type="checkbox" id="piano"> Mon piano (via le <a href="https://truc-jazz.vercel.app/ecoute/" target="_blank" rel="noopener">Labo d’écoute</a>)</label>
+      <label for="deep"><input type="checkbox" id="deep"> Réfléchir plus (bien plus lent)</label>
+      <span id="codeRow" hidden><input id="codeIn" type="password" placeholder="Code d’accès du site" autocomplete="off" aria-label="Code d’accès du site Truc Jazz"> <button type="button" id="codeOk" class="pill">OK</button></span>
+      <span id="pianoInfo" role="status"></span>
       <span id="status" role="status"></span>
     </div>
   </div>

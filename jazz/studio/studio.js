@@ -1,7 +1,8 @@
 /* Truc Jazz · Studio : discuter de piano jazz avec Claude, dans un artifact claude.ai.
-   Claude répond avec le compte de la personne (capacité « sample ») et dispose de trois outils
-   de la page : montrer (portée + clavier + son), voicings (notes exactes d'un accord),
-   trucs (bibliothèque Truc Jazz). Les cartes viennent de cards.js (window.TJCards). */
+   Claude répond avec le compte de la personne (capacité « sample ») et dispose des outils de la page :
+   montrer (portée + clavier + son), jouer (faire entendre une note, une résolution, des étapes),
+   voicings, trucs, et ecouter (ce que le Labo d'écoute a reconnu au piano, relu par le connecteur
+   Vercel : l'artifact n'a pas de micro). Les cartes viennent de cards.js (window.TJCards). */
 (function () {
   'use strict';
 
@@ -11,30 +12,182 @@
   const { buildCard, cardSummary, play, stop } = C;
   const $ = id => document.getElementById(id);
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const pref = (k, d) => { try { const v = localStorage.getItem('tj-studio:' + k); return v == null ? d : v === '1'; } catch (e) { return d; } };
+  const setPref = (k, v) => { try { localStorage.setItem('tj-studio:' + k, v ? '1' : '0'); } catch (e) { /* rien */ } };
+
+  // ---------- Exemples à l'écran, numérotés pour toute la conversation ----------
+  let CARDS = [];
+  let currentMsg = null; // message de Claude en cours
+  let lastText = ''; // texte de sa réponse en cours (pour la voix)
+  function addCard(spec, m) {
+    const obj = spec.geste ? buildCard(spec, 0, { geste: true }) : buildCard(spec, CARDS.length + 1); // erreur lisible si la notation est fausse
+    if (!spec.geste) CARDS.push(obj);
+    if (m) { m.cardsEl.appendChild(obj.el); m.cards.push(spec); }
+    return obj;
+  }
+
+  // ---------- Parler, puis jouer, puis reprendre : une seule file ----------
+  // La voix lit d'abord ce qu'il a écrit jusque-là, puis l'exemple joue ; Claude continue quand c'est fini.
+  let SEQ = Promise.resolve();
+  const ttsIdle = () => new Promise(res => {
+    const t0 = Date.now();
+    const f = () => (!VOICE.ok || !speechSynthesis.speaking || Date.now() - t0 > 25000 ? res() : setTimeout(f, 120));
+    setTimeout(f, 150);
+  });
+  function perform(obj, run, signal) {
+    const p = SEQ.then(async () => {
+      if (signal && signal.aborted) return;
+      if ($('speak').checked && VOICE.ok) { VOICE.feed(lastText, true); await ttsIdle(); }
+      if (signal && signal.aborted) return;
+      const k = obj.el.querySelector('.dockk') || obj.el;
+      k.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      await new Promise(done => run(() => done()));
+    });
+    SEQ = p.catch(() => {});
+    return p;
+  }
+
+  // ---------- Piano : ce que le Labo d'écoute a reconnu ----------
+  const PONT_URL = 'https://truc-jazz.vercel.app/api/pont';
+  const PIANO = { mcp: null, last: null };
+  const NAMES = ['Do', 'Ré♭', 'Ré', 'Mi♭', 'Mi', 'Fa', 'Fa♯', 'Sol', 'La♭', 'La', 'Si♭', 'Si'];
+  const nameOct = m => NAMES[((m % 12) + 12) % 12] + (Math.floor(m / 12) - 1);
+  const pianoCode = () => { try { return localStorage.getItem('tj-studio:code') || ''; } catch (e) { return ''; } };
+  function pianoError(code) {
+    return {
+      access_code: 'code d’accès refusé', site: 'le site ne répond pas', no_mcp: 'connecteur Vercel indisponible ici',
+      server_not_connected: 'ajoute le connecteur Vercel dans les réglages de claude.ai', needs_reauth: 'reconnecte le connecteur Vercel dans les réglages de claude.ai',
+      not_in_manifest: 'tu n’as pas autorisé le connecteur Vercel pour cette page', approval_required: 'autorisation du connecteur Vercel nécessaire',
+      blocked_by_policy: 'connecteur Vercel bloqué par ton organisation', selection_required: 'choisis quel connecteur Vercel utiliser',
+    }[code] || 'le Labo est injoignable pour l’instant';
+  }
+  async function pianoRead(secondes, signal) {
+    if (!PIANO.mcp) throw Object.assign(new Error('no_mcp'), { code: 'no_mcp' });
+    if (!pianoCode()) throw Object.assign(new Error('access_code'), { code: 'access_code' });
+    const url = `${PONT_URL}?code=${encodeURIComponent(pianoCode())}&secondes=${Math.round(secondes || 30)}`;
+    const r = await PIANO.mcp.callTool('Vercel', 'web_fetch_vercel_url', { url }, { cache: false, signal });
+    let p = r && r.payload;
+    if (typeof p === 'string') { try { p = JSON.parse(p); } catch (e) { p = {}; } }
+    p = p || {};
+    if (p.status === 401) throw Object.assign(new Error('access_code'), { code: 'access_code' });
+    if (p.status !== 200 || typeof p.text !== 'string') throw Object.assign(new Error('site'), { code: 'site' });
+    const d = JSON.parse(p.text);
+    PIANO.last = d;
+    return d;
+  }
+  const pianoLines = d => (d.journal || []).map(e => `il y a ${String(e.il_y_a_s).replace('.', ',')} s : ${e.notes.map(nameOct).join(' ')}${e.accord ? ' → ' + TJ.fmtSymbol(e.accord) : ''}`);
+  function pianoContext(d) {
+    if (d.labo !== 'écoute') return '[Piano : le Labo d’écoute n’écoute pas en ce moment (page fermée ou micro coupé).]';
+    const l = pianoLines(d);
+    return l.length ? '[Piano — ce que le Labo a reconnu ces 30 dernières secondes, du plus récent au plus ancien (reconnaissance automatique, peut se tromper) :\n' + l.join('\n') + ']'
+      : '[Piano : rien de reconnu ces 30 dernières secondes.]';
+  }
+  function pianoChip(d) {
+    if (d.labo !== 'écoute') return 'Labo pas à l’écoute';
+    const j = d.journal || [];
+    if (!j.length) return 'rien joué ces 30 s';
+    return j.slice(0, 4).reverse().map(e => (e.accord ? TJ.fmtSymbol(e.accord) : e.notes.map(nameOct).join(' '))).join(' → ') + ` (il y a ${Math.round(j[0].il_y_a_s)} s)`;
+  }
+  function pianoInfo(s) { $('pianoInfo').textContent = s || ''; }
+  async function pianoCheck() {
+    if (!$('piano').checked) { pianoInfo(''); return; }
+    if (!pianoCode()) { $('codeRow').hidden = false; pianoInfo('Tape le code d’accès du site Truc Jazz.'); return; }
+    pianoInfo('Je cherche le Labo…');
+    try {
+      const d = await pianoRead(60);
+      pianoInfo(d.labo === 'écoute' ? `Labo à l’écoute${d.journal.length ? ' · dernier accord il y a ' + Math.round(d.journal[0].il_y_a_s) + ' s' : ''}.` : 'Le Labo n’écoute pas : ouvre-le, active le micro et coche « Envoyer au studio Claude ».');
+    } catch (e) {
+      if (e.code === 'access_code') { $('codeRow').hidden = false; pianoInfo('Code refusé : retape-le.'); return; }
+      pianoInfo('Piano indisponible : ' + pianoError(e.code) + '.');
+    }
+  }
 
   // ---------- Outils pour Claude ----------
-  let currentMsg = null; // message assistant en cours
-  function toolMontrer(input) {
+  async function toolMontrer(input, ctx) {
     const spec = C.specFromInput(input);
-    const obj = buildCard(spec, currentMsg ? currentMsg.cards.length + 1 : 1); // lève une erreur lisible si la notation est fausse
-    if (currentMsg) { currentMsg.cardsEl.appendChild(obj.el); currentMsg.cards.push(spec); }
+    const obj = addCard(spec, currentMsg);
     setStatus(`Exemple ${obj.n} affiché`);
-    if (input.jouer) setTimeout(() => play(obj), 300);
-    return cardSummary(obj) + '. Affiché avec la partition et le clavier ; l’élève peut l’écouter.';
+    const out = cardSummary(obj) + '. Affiché avec la partition et le clavier ; l’élève peut l’écouter.';
+    if (!input.jouer) return out;
+    await perform(obj, done => C.play(obj, { onEnd: done }), ctx && ctx.signal);
+    return out + ' Joué en entier.';
   }
-  const TOOLS = [
+  async function toolJouer(input, ctx) {
+    const signal = ctx && ctx.signal;
+    if (input.exemple != null) {
+      const obj = CARDS[Math.round(Number(input.exemple)) - 1];
+      if (!obj) throw new Error(`Pas d’exemple n° ${input.exemple}. Exemples à l’écran : ${CARDS.length ? '1 à ' + CARDS.length : 'aucun'}.`);
+      const et = (Array.isArray(input.etapes) ? input.etapes : input.etapes != null ? [input.etapes] : []).map(x => Math.round(Number(x)) - 1);
+      if (et.some(i => !(i >= 0 && i < obj.steps.length))) throw new Error(`L’exemple ${obj.n} a ${obj.steps.length} étapes (1 à ${obj.steps.length}).`);
+      if (input.egrener) {
+        const list = et.length ? et : obj.steps.map((x, i) => i);
+        await perform(obj, done => C.playArp(obj, list, { onEnd: done }), signal);
+        return `Joué, exemple ${obj.n} : pour chaque étape, ses notes une par une de la plus grave à la plus aiguë, puis plaquées — ${list.map(i => C.stepText(obj.steps[i], i)).join(' ; ')}.`;
+      }
+      if (!et.length) {
+        await perform(obj, done => C.play(obj, { onEnd: done }), signal);
+        return `Exemple ${obj.n} joué en entier.`;
+      }
+      const i = Math.min.apply(null, et);
+      const j = Math.max.apply(null, et);
+      const part = obj.steps.slice(i, j + 1);
+      const moves = part.slice(1).map((s, k) => C.motion(part[k], s)).filter(Boolean);
+      await perform(obj, done => C.playSteps(obj, i, j, { onEnd: done }), signal);
+      return `Exemple ${obj.n}, joué de l’étape ${i + 1} à ${j + 1} : ${part.map((s, k) => C.stepText(s, i + k)).join(' ; ')}${moves.length ? '. Mouvement des voix : ' + moves.join(' | ') : ''}.`;
+    }
+    if (!input.notes) throw new Error('Donne notes (ex. « [G7]F4:1 [Cmaj7]E4:2 ») ou exemple + etapes.');
+    let accord = '';
+    if (input.accord) { const r = TJ.parseUserChord(String(input.accord)); if (r && !r.error) accord = r.display; }
+    const spec = { geste: true, titre: input.titre ? String(input.titre).slice(0, 80) : '', tempo: Math.max(40, Math.min(200, Number(input.tempo) || 80)), accord, partition: !!input.partition };
+    spec[input.main === 'mg' ? 'mg' : 'md'] = String(input.notes);
+    const obj = addCard(spec, currentMsg);
+    await perform(obj, done => C.play(obj, { onEnd: done }), signal);
+    return C.cardSummary(obj) + '. Joué.';
+  }
+  async function toolEcouter(input, ctx) {
+    const d = await pianoRead(Number(input.secondes) || 30, ctx && ctx.signal).catch(e => { throw new Error('Piano indisponible : ' + pianoError(e.code)); });
+    if (d.labo !== 'écoute') return 'Le Labo d’écoute n’écoute pas en ce moment : propose à l’élève de l’ouvrir et d’activer le micro.';
+    const l = pianoLines(d);
+    return l.length ? { joue: l } : { joue: [], note: 'Rien de reconnu dans cette fenêtre.' };
+  }
+  const JOUER = {
+    description: 'Joue au clavier de la page, comme un prof qui fait entendre ce qu’il explique : (1) notes = quelques notes en notation Truc Jazz (« F3 » ; « [G7]F4:1 [Cmaj7]E4:2 » pour la septième qui descend sur la tierce ; « [Dm7]D3+F3+C4:2 [G7]G2+F3+B3:2 ») : un petit clavier apparaît et s’allume au fur et à mesure ; (2) exemple = numéro d’un exemple affiché, etapes = numéros de ses cases d’accords à rejouer (ex. [2, 3]), egrener = true pour les notes une par une puis ensemble. Rend la main quand c’est fini de jouer, avec ce qui a sonné et le mouvement des voix.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        notes: { type: 'string', description: 'Notation Truc Jazz : « + » ensemble, espace = l’une après l’autre, « :2 » durée en temps, [G7] = accord pour les degrés' },
+        accord: { type: 'string', description: 'Accord de référence pour les degrés (ex. G7)' },
+        titre: { type: 'string', description: 'Légende courte' },
+        main: { type: 'string', enum: ['md', 'mg'] },
+        partition: { type: 'boolean', description: 'Afficher aussi la portée' },
+        exemple: { type: 'number' },
+        etapes: { type: 'array', items: { type: 'number' } },
+        egrener: { type: 'boolean' },
+        tempo: { type: 'number' },
+      },
+    },
+  };
+  // par ordre d'importance, si la plateforme limite le nombre d'outils
+  const ALL_TOOLS = [
     { name: 'montrer', description: C.SCHEMAS.montrer.description, inputSchema: C.SCHEMAS.montrer.parameters, execute: toolMontrer },
+    { name: 'jouer', description: JOUER.description, inputSchema: JOUER.inputSchema, execute: toolJouer },
     { name: 'voicings', description: C.SCHEMAS.voicings.description, inputSchema: C.SCHEMAS.voicings.parameters, execute: C.voicings },
+    { name: 'ecouter', description: 'Relit ce que l’élève vient de jouer au piano, reconnu au micro par le Labo d’écoute (accords et notes, il y a combien de secondes). Ses messages le contiennent déjà quand le piano est branché : n’appelle cet outil que pour regarder une autre fenêtre ou après lui avoir demandé de jouer.', inputSchema: { type: 'object', properties: { secondes: { type: 'number' } } }, execute: toolEcouter },
     { name: 'trucs', description: C.SCHEMAS.trucs.description, inputSchema: C.SCHEMAS.trucs.parameters, execute: C.trucs },
   ];
+  let TOOLS = ALL_TOOLS;
 
-  const RULES = `Tu es le prof de piano jazz du « Studio Truc Jazz ». Tu discutes avec un élève qui apprend le jazz sur le moment, par petits trucs, sans programme. Tu tutoies, en français, ton chaleureux et concret, phrases courtes.
+  const RULES = `Tu es le prof de piano jazz du « Studio Truc Jazz ». Tu discutes avec un élève qui apprend le jazz sur le moment, par petits trucs, sans programme, les mains sur son piano. Tu tutoies, en français, ton chaleureux et concret, phrases courtes, comme une vraie conversation.
 
-Règle d'or : dès que tu cites des notes ou un accord, même pour une question simple (accord, voicing, gamme, phrase, grille), appelle l'outil « montrer » pour l'afficher (partition + clavier + son), puis parles-en en le citant (« l'exemple 2 »). Un exemple court et juste vaut mieux qu'une longue explication. Pour les notes d'un voicing, appelle d'abord « voicings » : il donne les notes exactes. Pour un truc de la bibliothèque, appelle « trucs ».
+Règle d'or : dès que tu cites des notes ou un accord, appelle « montrer » pour l'afficher (partition + clavier + son), puis parles-en en le citant (« l'exemple 2 »). Pour les notes d'un voicing, appelle d'abord « voicings ». Pour un truc de la bibliothèque, « trucs ».
+
+Tu as aussi les mains sur le clavier de la page : avec « jouer », fais entendre chaque détail comme un prof assis au piano (une note, un intervalle, la septième qui descend sur la tierce, une note de passage, un accord égrené, les étapes 2 et 3 d'un exemple). Le son part au moment où tu appelles l'outil, au milieu de ta réponse : écris d'abord la phrase qui annonce (« Écoute la septième : »), appelle « jouer », puis commente ce qui a sonné. Préfère deux ou trois petits gestes joués à un long discours. Pour une résolution, écris des voix proches (chaque note bouge d'un ton au plus) et ne décris que ce que les outils disent avoir joué ; corrige-toi si un outil signale un saut.
+
+Quand le piano de l'élève est branché, ses messages se terminent par un bloc [Piano — …] : les accords que le Labo d'écoute a reconnus au micro juste avant. Sers-t'en pour commenter ce qu'il a joué (« ton sol sept était juste »), avec prudence : c'est une reconnaissance automatique, une basse peut manquer ou une harmonique être prise pour une note.
 
 ${C.NOTATION}
 
-Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'accords en lettres (Dm7, G7). Réponses courtes (100 à 200 mots) sauf si l'élève demande plus. Pas de titres. Finis souvent par une petite chose à essayer tout de suite au piano.`;
+Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'accords en lettres (Dm7, G7). Réponses courtes (60 à 150 mots) sauf si l'élève demande plus. Pas de titres. Finis souvent par une petite chose à essayer tout de suite au piano.`;
 
   // ---------- Voix : Claude lit ses réponses à voix haute ----------
   const SPOKEN_ROOT = { C: 'do', D: 'ré', E: 'mi', F: 'fa', G: 'sol', A: 'la', B: 'si' };
@@ -47,7 +200,7 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
   function spokenChord(sym) {
     const m = /^([A-G])(b|#|♭|♯)?(.*)$/.exec(sym);
     if (!m) return sym;
-    let out = SPOKEN_ROOT[m[1]] + (m[2] ? (/b|♭/.test(m[2]) ? ' bémol' : ' dièse') : '');
+    const out = SPOKEN_ROOT[m[1]] + (m[2] ? (/b|♭/.test(m[2]) ? ' bémol' : ' dièse') : '');
     const q = SPOKEN_Q.find(([re]) => re.test(m[3]));
     return out + (m[3] ? ' ' + (q ? q[1] : m[3]) : ' majeur');
   }
@@ -77,7 +230,7 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
       u.rate = 1.07;
       speechSynthesis.speak(u);
     },
-    // lit chaque phrase dès qu'elle est complète
+    // lit chaque phrase dès qu'elle est complète (final : tout ce qui reste)
     feed(text, final) {
       if (!this.ok || !$('speak').checked) return;
       for (;;) {
@@ -95,7 +248,7 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
 
   // ---------- Conversation ----------
   const STORE = 'tj-studio:v1';
-  let turns = []; // {role, text, cards:[spec]}
+  let turns = []; // {role, text, cards:[spec], piano?, chip?}
   try { turns = JSON.parse(localStorage.getItem(STORE) || '[]') || []; } catch (e) { turns = []; }
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify(turns.slice(-40))); } catch (e) { /* stockage indisponible */ } };
 
@@ -117,12 +270,12 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
       return `<p>${lines.map(inline).join('<br>')}</p>`;
     }).join('');
   }
-  function msgEl(role, text, cards) {
+  function msgEl(role, text, cards, chip) {
     const wrap = document.createElement('article');
     wrap.className = 'msg ' + (role === 'user' ? 'me' : 'prof');
-    wrap.innerHTML = `<div class="bubble">${role === 'user' ? `<p>${esc(text)}</p>` : md(text || '')}</div><div class="cards"></div>`;
+    wrap.innerHTML = `<div class="bubble">${role === 'user' ? `<p>${esc(text)}</p>` : md(text || '')}</div>${chip ? `<p class="chip">🎹 ${esc(chip)}</p>` : ''}<div class="cards"></div>`;
     const m = { el: wrap, textEl: wrap.querySelector('.bubble'), cardsEl: wrap.querySelector('.cards'), cards: [] };
-    (cards || []).forEach(spec => { try { const o = buildCard(spec, m.cards.length + 1); m.cardsEl.appendChild(o.el); m.cards.push(spec); } catch (e) { /* carte illisible */ } });
+    (cards || []).forEach(spec => { try { addCard(spec, m); } catch (e) { /* carte illisible */ } });
     $('thread').appendChild(wrap);
     return m;
   }
@@ -131,16 +284,19 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
 
   // Ce que Claude relit des échanges passés (il ne garde rien entre deux appels)
   function history() {
-    const intro = { role: 'assistant', text: INTRO_TEXT, cards: [DEMO] };
-    const h = [intro].concat(turns.slice(-16)).map(t => ({
-      role: t.role,
-      content: t.role === 'assistant' && t.cards && t.cards.length
-        ? (t.text || '(exemples)') + '\n\n[Exemples affichés dans ce message : ' + t.cards.map((c, i) => `${i + 1}. ${c.titre} — ${['md', 'mg', 'basse'].filter(k => c[k]).map(k => `${k}: ${c[k]}`).join(' ; ')}`).join(' | ') + ']'
-        : t.text || '…',
-    }));
-    if (turns.length > 16) while (h.length > 1 && h[1].role !== 'user') h.splice(1, 1);
+    const all = [{ role: 'assistant', text: INTRO_TEXT, cards: [DEMO] }].concat(turns);
+    let n = 0;
+    const h = all.map(t => {
+      const listed = (t.cards || []).map(c => c.geste
+        ? `au clavier : ${c.md || c.mg}`
+        : `${++n}. ${c.titre} — ${['md', 'mg', 'basse'].filter(k => c[k]).map(k => `${k}: ${c[k]}`).join(' ; ')}`);
+      if (t.role === 'user') return { role: 'user', content: (t.text || '…') + (t.piano ? '\n\n' + t.piano : '') };
+      return { role: 'assistant', content: (t.text || '(exemples)') + (listed.length ? '\n\n[Affiché et joué dans ce message : ' + listed.join(' | ') + ']' : '') };
+    });
+    let recent = [h[0]].concat(h.slice(1).slice(-16));
+    while (recent.length > 1 && recent[1].role !== 'user') recent.splice(1, 1);
     const rules = tools ? RULES : RULES + '\n\nIci tu n’as pas d’outils : pour chaque exemple, écris un bloc ```exemple {"titre": "…", "mg": "…", "md": "…", "tempo": 100}``` (JSON valide, notation Truc Jazz). La page l’affiche avec partition, clavier et son.';
-    return [{ role: 'user', content: rules }].concat(h);
+    return [{ role: 'user', content: rules }].concat(recent);
   }
 
   let sample = null;
@@ -152,29 +308,45 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
     AU.ensure(); // le geste de l'élève autorise le son pour la suite
     stop();
     VOICE.reset();
+    SEQ = Promise.resolve();
     if ($('speak').checked) VOICE.unlock();
-    turns.push({ role: 'user', text });
-    save();
     $('ideas').hidden = true;
-    msgEl('user', text);
-    const m = msgEl('assistant', '');
-    m.textEl.innerHTML = '<p class="thinking">Claude réfléchit…</p>';
-    currentMsg = m;
-    scrollDown();
     const ctl = new AbortController();
     busy = ctl;
     $('sendBtn').hidden = true;
     $('stopBtn').hidden = false;
+    const turn = { role: 'user', text };
+    // le piano d'abord : ce que le Labo vient d'entendre part avec la question
+    if ($('piano').checked && PIANO.mcp) {
+      setStatus('Je regarde ce que tu viens de jouer…');
+      try {
+        const d = await pianoRead(30, ctl.signal);
+        turn.piano = pianoContext(d);
+        turn.chip = pianoChip(d);
+      } catch (e) {
+        turn.chip = 'piano indisponible : ' + pianoError(e.code);
+      }
+    }
+    turns.push(turn);
+    save();
+    msgEl('user', text, null, turn.chip);
+    const m = msgEl('assistant', '');
+    m.textEl.innerHTML = '<p class="thinking">Claude réfléchit…</p>';
+    currentMsg = m;
+    lastText = '';
+    scrollDown();
     setStatus('');
     let finalText = '';
     try {
-      const opts = { signal: ctl.signal, cache: false, onText: ({ text: t }) => { finalText = t; m.textEl.innerHTML = md(t); VOICE.feed(t, false); } };
-      if (tools) opts.tools = TOOLS;
-      // rapide par défaut : pas de réflexion préalable, chaque aller-retour d'outil prend environ une seconde
+      const opts = { signal: ctl.signal, onText: ({ text: t }) => { finalText = t; lastText = t; m.textEl.innerHTML = md(t); VOICE.feed(t, false); } };
+      if (tools) opts.tools = TOOLS; else opts.cache = false;
+      // rapide par défaut : environ une seconde par aller-retour d'outil (le niveau « default » réfléchit 30 à 90 s)
       opts.modelTier = $('deep').checked ? 'default' : 'quick';
       const r = await sample(history(), opts);
       finalText = r.text;
+      lastText = r.text;
       m.textEl.innerHTML = md(r.text);
+      await SEQ; // la voix reprend après le dernier exemple joué
       VOICE.feed(r.text, true);
       if (r.truncated) setStatus('Réponse coupée : demande-lui la suite.');
       if (!tools) parseFallbackCards(m, r.text);
@@ -203,24 +375,23 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
     const re = /```exemple\s*([\s\S]*?)```/g;
     let x;
     while ((x = re.exec(text))) {
-      try { const spec = JSON.parse(x[1]); const o = buildCard(spec, m.cards.length + 1); m.cardsEl.appendChild(o.el); m.cards.push(spec); } catch (e) { /* bloc illisible */ }
+      try { addCard(JSON.parse(x[1]), m); } catch (e) { /* bloc illisible */ }
     }
     m.textEl.innerHTML = md(text.replace(re, ''));
   }
 
   // ---------- Démarrage ----------
-  const INTRO_TEXT = 'Salut ! Pose-moi n’importe quelle question sur le piano jazz. Quand je parle de notes, je te les montre sur la portée et le clavier, et tu peux les écouter. Par exemple, voici le II-V-I, l’enchaînement le plus joué du jazz :';
+  const INTRO_TEXT = 'Salut ! Pose-moi n’importe quelle question sur le piano jazz, en l’écrivant ou en la dictant avec le micro du clavier. Je te montre les notes sur la portée et le clavier, et je te les fais entendre. Par exemple, voici le II-V-I, l’enchaînement le plus joué du jazz :';
   const DEMO = {
     titre: 'II-V-I en Do, en shells', mg: '[Dm7]D3+F3+C4:4 [G7]G2+F3+B3:4 [Cmaj7]C3+E3+B3:8', tempo: 80,
     explication: 'Touche un accord pour l’entendre seul, ou Écouter pour l’enchaînement.',
   };
   function renderAll() {
     $('thread').innerHTML = '';
-    if (!turns.length) {
-      const m = msgEl('assistant', INTRO_TEXT, [DEMO]);
-      m.el.classList.add('intro');
-    }
-    turns.forEach(t => msgEl(t.role, t.text, t.cards));
+    CARDS = [];
+    const m = msgEl('assistant', INTRO_TEXT, [DEMO]);
+    m.el.classList.add('intro');
+    turns.forEach(t => msgEl(t.role, t.text, t.cards, t.chip));
     $('ideas').hidden = turns.length > 0;
     requestAnimationFrame(scrollDown);
   }
@@ -228,14 +399,23 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
     $('composer').addEventListener('submit', e => { e.preventDefault(); const v = $('q').value; $('q').value = ''; autosize(); send(v); });
     $('q').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); } });
     $('q').addEventListener('input', autosize);
-    $('stopBtn').addEventListener('click', () => { if (busy) busy.abort(); VOICE.reset(); });
+    $('stopBtn').addEventListener('click', () => { if (busy) busy.abort(); stop(); VOICE.reset(); });
     // préférences gardées sur cet appareil
-    ['deep', 'speak'].forEach(id => {
-      try { const v = localStorage.getItem('tj-studio:' + id); if (v != null) $(id).checked = v === '1'; } catch (e) { /* rien */ }
-      $(id).addEventListener('change', () => { try { localStorage.setItem('tj-studio:' + id, $(id).checked ? '1' : '0'); } catch (e) { /* rien */ } if (id === 'speak' && !$(id).checked) VOICE.reset(); });
+    ['deep', 'speak', 'piano'].forEach(id => {
+      $(id).checked = pref(id, $(id).checked);
+      $(id).addEventListener('change', () => { setPref(id, $(id).checked); if (id === 'speak' && !$(id).checked) VOICE.reset(); });
+    });
+    $('piano').addEventListener('change', pianoCheck);
+    $('codeOk').addEventListener('click', () => {
+      const v = $('codeIn').value.trim();
+      if (!v) return;
+      try { localStorage.setItem('tj-studio:code', v); } catch (e) { /* rien */ }
+      $('codeIn').value = '';
+      $('codeRow').hidden = true;
+      pianoCheck();
     });
     if (!VOICE.ok) $('speakLbl').hidden = true;
-    $('newBtn').addEventListener('click', () => { if (busy) busy.abort(); stop(); turns = []; save(); renderAll(); setStatus('Nouvelle conversation.'); });
+    $('newBtn').addEventListener('click', () => { if (busy) busy.abort(); stop(); VOICE.reset(); turns = []; save(); renderAll(); setStatus('Nouvelle conversation.'); });
     document.querySelectorAll('[data-ask]').forEach(b => b.addEventListener('click', () => { $('q').value = b.dataset.ask; send(b.dataset.ask); $('q').value = ''; }));
   }
   function autosize() { const q = $('q'); q.style.height = 'auto'; q.style.height = Math.min(160, q.scrollHeight) + 'px'; }
@@ -244,14 +424,24 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
   wire();
   (async () => {
     const use = window.claude && window.claude.use ? window.claude.use.bind(window.claude) : null;
-    sample = use ? await use('sample') : null;
+    const [s, mcp] = use ? await Promise.all([use('sample'), use('mcp')]) : [null, null];
+    sample = s;
+    PIANO.mcp = mcp;
+    if (!mcp) { $('pianoLbl').hidden = true; } else if ($('piano').checked && pianoCode()) {
+      pianoInfo('Piano branché (via le Labo d’écoute).');
+    }
     if (!sample) {
       $('q').disabled = true;
       $('sendBtn').disabled = true;
       setStatus('Ouvre ce studio dans Claude pour discuter : il utilise ton compte Claude. Les exemples restent jouables.');
       return;
     }
-    try { const lim = await sample.limits(); tools = !!(lim && lim.tools && lim.tools.maxCount >= TOOLS.length); } catch (e) { tools = false; }
+    try {
+      const lim = await sample.limits();
+      const max = lim && lim.tools ? lim.tools.maxCount || ALL_TOOLS.length : 0;
+      TOOLS = ALL_TOOLS.filter(t => t.name !== 'ecouter' || PIANO.mcp).slice(0, max);
+      tools = TOOLS.length > 0;
+    } catch (e) { tools = false; }
     $('q').disabled = false;
     $('sendBtn').disabled = false;
   })();
