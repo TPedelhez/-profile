@@ -150,15 +150,72 @@
     description: 'Renvoie ce que l’élève vient de jouer au piano, reconnu au micro par l’app (accords et notes, il y a combien de secondes). À appeler quand il te demande d’écouter, si c’était juste, ou de commenter ce qu’il vient de jouer. La reconnaissance peut se tromper (une basse manquante, une harmonique prise pour une note).',
     parameters: { type: 'object', properties: { secondes: { type: 'number', description: 'Fenêtre à regarder, 30 s par défaut' } } },
   };
+  const JOUER = {
+    description: 'Joue au clavier de l’écran, comme un prof qui fait entendre ce qu’il explique. Sers-t’en sans arrêt, pour le moindre détail. Deux façons : '
+      + '(1) notes = quelques notes en notation Truc Jazz : « F3 » (une note), « [G7]F4:1 [Cmaj7]E4:2 » (la septième de sol sept qui descend sur la tierce de do ; l’accord entre crochets donne les degrés affichés), « [Dm7]D3+F3+C4:2 [G7]G2+F3+B3:2 » (deux accords) ; un petit clavier apparaît et les touches s’allument au fur et à mesure. '
+      + '(2) exemple = numéro d’un exemple affiché, avec etapes = numéros des cases d’accords sous sa partition (ex. [2, 3] pour rejouer le passage du deuxième au troisième accord) ; egrener = true fait entendre les notes d’une étape une par une, de la plus grave à la plus aiguë, puis ensemble ; sans etapes, tout l’exemple. '
+      + 'Le résultat arrive quand c’est fini de jouer, avec ce qui a sonné et le mouvement de chaque voix : attends-le sans parler, puis commente.',
+    parameters: {
+      type: 'object',
+      properties: {
+        notes: { type: 'string', description: 'Notation Truc Jazz : « + » = ensemble, espace = l’une après l’autre, « :2 » = durée en temps' },
+        accord: { type: 'string', description: 'Accord de référence pour afficher les degrés sur les touches (ex. G7)' },
+        titre: { type: 'string', description: 'Légende courte, ex. « La 7e descend sur la tierce »' },
+        main: { type: 'string', enum: ['md', 'mg'], description: 'md (rouge, par défaut) ou mg (bleu)' },
+        partition: { type: 'boolean', description: 'Afficher aussi la portée (faux par défaut)' },
+        exemple: { type: 'number', description: 'Numéro d’un exemple déjà affiché' },
+        etapes: { type: 'array', items: { type: 'number' }, description: 'Étapes de cet exemple à rejouer (1 = la première case d’accord)' },
+        egrener: { type: 'boolean', description: 'Notes de l’étape une par une, puis ensemble' },
+        tempo: { type: 'number', description: 'Noires par minute (80 par défaut pour notes)' },
+      },
+    },
+  };
+  const CARDS = []; // exemples affichés, numérotés pour toute la séance
+  const sounded = obj => obj.steps.map(C.stepText).join(' ; ');
+  function addCard(obj, msg) {
+    msg.cards.appendChild(obj.el);
+    obj.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  // Une lecture différée : jouée quand le prof a fini sa phrase ; le résultat part quand c'est fini
+  const later = (obj, run, output) => ({ defer: true, obj, run, output });
   function runTool(name, args, msg) {
     if (name === 'montrer') {
       const spec = C.specFromInput(args);
-      const obj = C.buildCard(spec, msg.n + 1); // erreur lisible si la notation est fausse
-      msg.n++;
-      msg.cards.appendChild(obj.el);
-      obj.el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-      if (args.jouer) RT.pendingPlay = obj; // joué quand il a fini sa phrase
-      return C.cardSummary(obj) + '. Affiché à l’écran avec la partition et le clavier.';
+      const obj = C.buildCard(spec, CARDS.length + 1); // erreur lisible si la notation est fausse
+      CARDS.push(obj);
+      addCard(obj, msg);
+      const out = C.cardSummary(obj) + '. Affiché à l’écran avec la partition et le clavier.';
+      return args.jouer ? later(obj, done => C.play(obj, { onEnd: done }), out + ' Joué en entier.') : out;
+    }
+    if (name === 'jouer') {
+      const tempo = Math.max(40, Math.min(200, Number(args.tempo) || 80));
+      if (args.exemple != null) {
+        const obj = CARDS[Math.round(args.exemple) - 1];
+        if (!obj) throw new Error(`Pas d’exemple n° ${args.exemple}. Exemples affichés : ${CARDS.length ? '1 à ' + CARDS.length : 'aucun'}.`);
+        const et = (Array.isArray(args.etapes) ? args.etapes : args.etapes != null ? [args.etapes] : []).map(x => Math.round(Number(x)) - 1);
+        if (et.some(i => !(i >= 0 && i < obj.steps.length))) throw new Error(`L’exemple ${obj.n} a ${obj.steps.length} étapes (1 à ${obj.steps.length}).`);
+        obj.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        if (args.egrener) {
+          const list = et.length ? et : obj.steps.map((x, i) => i);
+          return later(obj, done => C.playArp(obj, list, { onEnd: done }),
+            `Joué, exemple ${obj.n} : pour chaque étape, ses notes une par une de la plus grave à la plus aiguë, puis plaquées ensemble — ${list.map(i => C.stepText(obj.steps[i], i)).join(' ; ')}.`);
+        }
+        if (!et.length) return later(obj, done => C.play(obj, { onEnd: done }), `Exemple ${obj.n} joué en entier : ${sounded(obj)}.`);
+        const i = Math.min.apply(null, et);
+        const j = Math.max.apply(null, et);
+        const part = obj.steps.slice(i, j + 1);
+        const moves = part.slice(1).map((s, k) => C.motion(part[k], s)).filter(Boolean);
+        return later(obj, done => C.playSteps(obj, i, j, { onEnd: done, bpm: obj.spec.tempo }),
+          `Exemple ${obj.n}, joué de l’étape ${i + 1} à ${j + 1} : ${part.map((s, k) => C.stepText(s, i + k)).join(' ; ')}${moves.length ? '. Mouvement des voix : ' + moves.join(' | ') : ''}.`);
+      }
+      if (!args.notes) throw new Error('Donne notes (ex. « C4:1 B3:2 ») ou exemple + etapes.');
+      let accord = '';
+      if (args.accord) { const r = TJ.parseUserChord(String(args.accord)); if (r && !r.error) accord = r.display; }
+      const spec = { titre: args.titre ? String(args.titre).slice(0, 80) : '', tempo, accord, partition: !!args.partition };
+      spec[args.main === 'mg' ? 'mg' : 'md'] = String(args.notes);
+      const obj = C.buildCard(spec, 0, { geste: true });
+      addCard(obj, msg);
+      return later(obj, done => C.play(obj, { onEnd: done }), C.cardSummary(obj) + '.');
     }
     if (name === 'voicings') return C.voicings(args);
     if (name === 'trucs') return C.trucs(args);
@@ -174,12 +231,18 @@
 
 Comment tu parles : en français, en tutoyant, chaleureux et concret, comme un prof assis à côté du piano. Très court : une à trois phrases, puis tu laisses la place. Va droit au but. Propose souvent une petite chose à essayer tout de suite au clavier. Dis les accords comme on les prononce (« ré mineur sept », « sol sept ») ; ne lis jamais la notation à voix haute.
 
-L'écran : dès que tu parles de notes concrètes (accord, voicing, gamme, phrase, grille), appelle l'outil « montrer » : l'exemple s'affiche avec la partition et le clavier pendant que tu parles. Dis d'abord une courte phrase (« je te le montre »), puis explique en t'appuyant sur ce qui est à l'écran (« regarde le clavier : le fa et le do sont les notes guides »). Mets jouer: true quand il faut l'entendre. Pour les notes exactes d'un voicing, appelle d'abord « voicings ». Pour un truc de la bibliothèque, « trucs ». Pour savoir ce que l'élève vient de jouer, appelle « ecouter » (tu entends aussi le son, mais pour les noms exacts des notes, fie-toi à « ecouter »). Des messages « [App] » peuvent aussi te dire ce qu'il a joué : ce ne sont pas des questions, ne leur réponds pas seuls.
+L'écran : dès que tu parles de notes concrètes (accord, voicing, gamme, phrase, grille), appelle « montrer » : l'exemple s'affiche avec la partition, les cases d'accords (les étapes) et le clavier. Pour les notes exactes d'un voicing, appelle d'abord « voicings ». Pour un truc de la bibliothèque, « trucs ».
+
+Tu as les mains sur le piano de l'écran : joue tout le temps, comme un vrai prof assis au piano qui fait entendre chaque détail en même temps qu'il l'explique. Avec « jouer » tu peux faire entendre n'importe quoi : une note seule, un intervalle, la septième qui descend sur la tierce, une note de passage, une tension, un accord égrené note par note, ou rejouer les étapes 2 et 3 d'un exemple pour faire entendre la résolution. Avance par petits allers-retours : une phrase courte qui annonce (« écoute la septième… »), puis l'appel à « jouer » (ou « montrer » avec jouer: true) ; tu te tais pendant que ça joue, le résultat te revient à la fin avec ce qui a sonné et le mouvement de chaque voix ; alors une phrase de commentaire, et tu rejoues, compares ou fais essayer. Préfère trois petits gestes joués à un long discours. Pour une résolution, écris des voix proches : chaque note bouge d'un ton au plus (la septième descend d'un demi-ton sur la tierce), quitte à changer d'octave. Les outils te renvoient ce qui a vraiment sonné et le mouvement de chaque voix : ne décris que ça, et corrige-toi si un outil signale un saut. Ne dis jamais la notation.
+
+Pour savoir ce que l'élève vient de jouer, appelle « ecouter » (tu entends aussi le son, mais pour les noms exacts des notes, fie-toi à « ecouter »). Des messages « [App] » peuvent aussi te dire ce qu'il a joué : ce ne sont pas des questions, ne leur réponds pas seuls.
 
 ${C.NOTATION}`;
+  const instructions = () => INSTRUCTIONS + (CARDS.length ? '\n\nDéjà à l’écran au début : ' + CARDS.map(o => C.cardSummary(o)).join('\n') : '');
 
   function toolDefs() {
     const defs = Object.keys(C.SCHEMAS).map(name => ({ type: 'function', name, description: C.SCHEMAS[name].description, parameters: C.SCHEMAS[name].parameters }));
+    defs.push({ type: 'function', name: 'jouer', description: JOUER.description, parameters: JOUER.parameters });
     defs.push({ type: 'function', name: 'ecouter', description: ECOUTER.description, parameters: ECOUTER.parameters });
     return defs;
   }
@@ -188,7 +251,8 @@ ${C.NOTATION}`;
   const RT = {
     pc: null, dc: null, mic: null, audio: null, an: null, buf: null, on: false,
     speaking: false, lastVoice: 0, tStop: null, latShown: true, msg: null, done: new Set(), outputs: [],
-    pendingPlay: null, cardPlaying: false, lastActivity: 0, model: '', cont: false, heard: new Map(),
+    queue: [], playing: false, respDone: true, bufActive: false, sawBuf: false, nextAt: 0,
+    cardPlaying: false, lastActivity: 0, model: '', heard: new Map(),
   };
   const send = obj => { if (RT.dc && RT.dc.readyState === 'open') RT.dc.send(JSON.stringify(obj)); };
 
@@ -215,7 +279,46 @@ ${C.NOTATION}`;
       output = { erreur: e.message };
       LOG.ev('tool_error', { name: item.name, msg: e.message, args: JSON.stringify(args).slice(0, 400) });
     }
+    if (output && output.defer) { RT.queue.push({ call_id: item.call_id, obj: output.obj, run: output.run, output: output.output }); return; }
     RT.outputs.push({ call_id: item.call_id, output: typeof output === 'string' ? output : JSON.stringify(output) });
+  }
+
+  // Les résultats des outils repartent quand sa phrase est finie et que tout a été joué ; alors il reprend la parole
+  function flush(silent) {
+    if (!silent && (!RT.respDone || RT.queue.length || RT.playing)) return;
+    if (!RT.outputs.length) { if (!silent) status('À toi : parle-lui, joue, ou écris.'); return; }
+    RT.outputs.splice(0).forEach(o => send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: o.call_id, output: o.output } }));
+    if (silent) return;
+    send({ type: 'response.create' });
+    status('Il reprend…');
+  }
+  // le clavier qui joue reste visible au-dessus du panneau d'appel
+  function reveal(obj) {
+    const k = obj.el.querySelector('.dockk') || obj.el;
+    k.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function startNext() {
+    const it = RT.queue.shift();
+    RT.playing = true;
+    if (it.obj) reveal(it.obj);
+    status('Il joue… écoute.');
+    let ended = false;
+    const done = interrupted => {
+      if (ended) return;
+      ended = true;
+      RT.playing = false;
+      RT.outputs.push({ call_id: it.call_id, output: interrupted ? it.output + ' (interrompu avant la fin)' : it.output });
+      RT.nextAt = performance.now() + 300;
+      if (!RT.queue.length) setTimeout(() => flush(), 150);
+    };
+    try { it.run(done); } catch (e) { done(true); }
+  }
+  // Il parle par-dessus une démonstration en attente : on l'annule, sans relancer de réponse (sa voix en déclenche une)
+  function cancelQueue(why) {
+    const pending = RT.queue.splice(0);
+    pending.forEach(it => RT.outputs.push({ call_id: it.call_id, output: 'Pas joué : ' + why + '.' }));
+    if (RT.playing) C.stop();
+    flush(true);
   }
 
   function onEvent(ev) {
@@ -223,7 +326,16 @@ ${C.NOTATION}`;
       case 'input_audio_buffer.speech_started':
         RT.lastActivity = performance.now();
         status('Il t’écoute…');
+        if (RT.queue.length || RT.playing) cancelQueue('l’élève a parlé');
         sendPianoContext();
+        break;
+      case 'output_audio_buffer.started':
+        RT.bufActive = true;
+        RT.sawBuf = true;
+        break;
+      case 'output_audio_buffer.stopped':
+      case 'output_audio_buffer.cleared':
+        RT.bufActive = false;
         break;
       case 'input_audio_buffer.speech_stopped': {
         RT.tStop = performance.now();
@@ -248,19 +360,18 @@ ${C.NOTATION}`;
         break;
       }
       case 'response.created':
-        // après un outil, la suite de sa réponse reste dans la même bulle que l'exemple
-        if (!RT.cont) RT.msg = null;
-        else if (RT.msg) { RT.msg.base = RT.msg.text ? RT.msg.text + ' ' : ''; RT.msg.cur = ''; }
-        RT.cont = false;
+        // une bulle par réponse : parole, geste joué, parole… dans l'ordre où ça se passe
+        RT.msg = null;
+        RT.respDone = false;
         break;
       case 'response.output_audio_transcript.delta':
         if (!RT.msg) RT.msg = addMsg('prof', '');
-        RT.msg.cur = (RT.msg.cur || '') + (ev.delta || '');
-        RT.msg.text = (RT.msg.base || '') + RT.msg.cur;
+        RT.msg.text += ev.delta || '';
         RT.msg.p.textContent = RT.msg.text;
         break;
       case 'response.output_audio_transcript.done':
-        if (RT.msg && ev.transcript) { RT.msg.cur = ev.transcript; RT.msg.text = (RT.msg.base || '') + ev.transcript; RT.msg.p.textContent = RT.msg.text; }
+        if (!RT.msg && ev.transcript) RT.msg = addMsg('prof', '');
+        if (RT.msg && ev.transcript) { RT.msg.text = ev.transcript; RT.msg.p.textContent = ev.transcript; }
         if (RT.msg) LOG.ev('answer', { a: RT.msg.text });
         break;
       case 'response.output_item.done':
@@ -271,15 +382,9 @@ ${C.NOTATION}`;
         break;
       case 'response.done':
         if (ev.response && Array.isArray(ev.response.output)) ev.response.output.forEach(execCall);
-        if (RT.outputs.length) {
-          // résultats des outils, puis on le laisse continuer à parler
-          RT.outputs.splice(0).forEach(o => send({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: o.call_id, output: o.output } }));
-          RT.cont = true;
-          send({ type: 'response.create' });
-          status('Il prépare la suite…');
-        } else {
-          status('À toi : parle-lui, joue, ou écris.');
-        }
+        RT.respDone = true;
+        if (ev.response && ev.response.status === 'cancelled' && RT.queue.length) cancelQueue('réponse coupée');
+        else flush();
         break;
       case 'error':
         status('Erreur du modèle vocal : ' + ((ev.error && ev.error.message) || 'inconnue'));
@@ -312,11 +417,9 @@ ${C.NOTATION}`;
       }
       RT.speaking = speaking;
     }
-    if (RT.pendingPlay && now - RT.lastVoice > 450) {
-      const obj = RT.pendingPlay;
-      RT.pendingPlay = null;
-      C.play(obj);
-    }
+    // la démonstration attend la fin de sa phrase (et un petit souffle)
+    const quiet = now - RT.lastVoice > (RT.bufActive ? 1500 : RT.sawBuf ? 250 : 500);
+    if (RT.queue.length && !RT.playing && RT.respDone && quiet && now >= RT.nextAt) startNext();
     if (now - RT.lastActivity > IDLE_MS) { hangUp('Raccroché après 4 minutes sans échange, pour ne pas payer pour rien.'); return; }
     requestAnimationFrame(tick);
   }
@@ -362,7 +465,7 @@ ${C.NOTATION}`;
       const dc = pc.createDataChannel('oai-events');
       dc.onmessage = e => { try { onEvent(JSON.parse(e.data)); } catch (err) { /* événement illisible */ } };
       dc.onopen = () => {
-        send({ type: 'session.update', session: { type: 'realtime', instructions: INSTRUCTIONS, tools: toolDefs(), tool_choice: 'auto' } });
+        send({ type: 'session.update', session: { type: 'realtime', instructions: instructions(), tools: toolDefs(), tool_choice: 'auto' } });
         status('Connecté. Parle-lui : « Montre-moi un II-V-I en fa », « Écoute ce que je joue »…');
       };
       const offer = await pc.createOffer();
@@ -373,7 +476,7 @@ ${C.NOTATION}`;
       if (!sdp.ok) throw new Error('connexion refusée (' + sdp.status + ')');
       await pc.setRemoteDescription({ type: 'answer', sdp: await sdp.text() });
       pc.onconnectionstatechange = () => { if (['failed', 'closed', 'disconnected'].indexOf(pc.connectionState) >= 0 && RT.on) hangUp('Appel coupé (' + pc.connectionState + ').'); };
-      Object.assign(RT, { pc, dc, on: true, lastActivity: performance.now(), lastVoice: 0, done: new Set(), outputs: [] });
+      Object.assign(RT, { pc, dc, on: true, lastActivity: performance.now(), lastVoice: 0, done: new Set(), outputs: [], queue: [], playing: false, respDone: true, bufActive: false, sawBuf: false });
       btn.textContent = 'Raccrocher';
       btn.dataset.on = '1';
       $('thread').classList.add('live');
@@ -394,7 +497,8 @@ ${C.NOTATION}`;
     try { if (RT.pc) RT.pc.close(); } catch (e) { /* déjà fermé */ }
     if (RT.mic) RT.mic.stop();
     if (RT.audio) RT.audio.srcObject = null;
-    Object.assign(RT, { pc: null, dc: null, mic: null, stream: null, an: null, msg: null, pendingPlay: null, cont: false });
+    if (RT.playing) C.stop();
+    Object.assign(RT, { pc: null, dc: null, mic: null, stream: null, an: null, msg: null, queue: [], playing: false, outputs: [] });
     RT.heard.forEach(m => { if (m.p.textContent === '…') m.p.textContent = '(ta voix)'; });
     RT.heard.clear();
     stopPiano();
@@ -412,13 +516,22 @@ ${C.NOTATION}`;
     if (!RT.on) { status('Appelle d’abord le prof, puis parle-lui ou écris-lui.'); return; }
     addMsg('me', text);
     RT.lastActivity = performance.now();
+    if (RT.queue.length || RT.playing) cancelQueue('l’élève a écrit');
     sendPianoContext();
     send({ type: 'conversation.item.create', item: { type: 'message', role: 'user', content: [{ type: 'input_text', text }] } });
     send({ type: 'response.create' });
     LOG.ev('typed', { q: text });
   }
 
+  // pour les tests de bout en bout (outils et consignes réels, sans appel vocal)
+  window.TJVoix = { toolDefs, instructions, runTool: (name, args) => runTool(name, args, RT.msg || (RT.msg = addMsg('prof', ''))) };
+
   // ---------- Démarrage ----------
+  // hauteur du panneau d'appel, pour que les exemples ne passent pas dessous
+  try {
+    const dock = document.querySelector('.dock-in');
+    new ResizeObserver(() => document.documentElement.style.setProperty('--dockh', dock.offsetHeight + 'px')).observe(dock);
+  } catch (e) { /* navigateur ancien : tant pis */ }
   $('miniToggle').checked = pref('mini', false);
   $('pianoToggle').checked = pref('piano', false);
   $('logToggle').checked = pref('log', true);
@@ -435,6 +548,7 @@ ${C.NOTATION}`;
   try {
     const intro = $('introCards');
     const obj = C.buildCard({ titre: 'II-V-I en Do, en shells', mg: '[Dm7]D3+F3+C4:4 [G7]G2+F3+B3:4 [Cmaj7]C3+E3+B3:8', tempo: 80 }, 1);
+    CARDS.push(obj);
     intro.appendChild(obj.el);
   } catch (e) { /* pas d'exemple */ }
   if (!window.RTCPeerConnection || !navigator.mediaDevices) {

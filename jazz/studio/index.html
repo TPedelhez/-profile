@@ -33,6 +33,9 @@
     .msg.me.voice.heard .bubble { border-style: solid; color: var(--ink); background: var(--me); }
     .intro .bubble p + p { margin-top: 8px; }
     .top nav { display: flex; gap: 8px; flex-wrap: wrap; }
+    .card, .card .dockk, .msg { scroll-margin-bottom: calc(var(--dockh, 240px) + 12px); scroll-margin-top: 150px; }
+    /* pendant l'appel, le panneau se fait plus discret : le réglage mini ne vaut que pour le prochain appel */
+    #thread.live ~ .dock-in label[for="miniToggle"], #thread.live ~ .dock-in label[for="logToggle"] { display: none; }
   </style>
 </head>
 <body>
@@ -76,7 +79,7 @@
       </form>
       <div class="opts">
         <label for="pianoToggle"><input type="checkbox" id="pianoToggle"> Il écoute aussi mon piano</label>
-        <label for="miniToggle"><input type="checkbox" id="miniToggle"> Version mini (≈ 3× moins chère)</label>
+        <label for="miniToggle"><input type="checkbox" id="miniToggle"> Version mini (3× moins chère, moins fine en musique)</label>
         <label for="logToggle"><input type="checkbox" id="logToggle"> Boîte noire</label>
       </div>
     </div>

@@ -89,7 +89,10 @@ la publier avec `theory.js`, `tricks.js`, `audio.js` et `studio/studio.js`, et l
 `studio/index.html` (servi sur `/studio/`) : on parle au prof comme au téléphone (OpenAI Realtime en WebRTC,
 clé éphémère via `api/realtime.js`, protégée par `ACCESS_CODE`). Il répond à voix haute et appelle les outils de la page :
 `montrer` (partition + clavier + son, joué quand il a fini sa phrase), `voicings`, `trucs`, et `ecouter`
-(ce que le détecteur a reconnu au micro si « Il écoute aussi mon piano » est coché). Ta voix est transcrite dans le fil.
+(ce que le détecteur a reconnu au micro si « Il écoute aussi mon piano » est coché), et surtout `jouer` : il fait entendre
+n'importe quelle note, un intervalle, une résolution (petit clavier « Au clavier »), rejoue des étapes d'un exemple ou les
+égrène note par note. Il annonce, se tait pendant que ça joue, reçoit ce qui a sonné et le mouvement de chaque voix
+(avec une alerte si une voix saute), puis commente. Ta voix est transcrite dans le fil.
 Réglages : version mini (environ 3 fois moins chère), boîte noire (`api/log.js`, app `studio-vocal`).
 L'appel raccroche seul après 4 minutes sans échange. Les cartes musicales (`studio/cards.js`, `studio/studio.css`)
 sont partagées avec le studio Claude.

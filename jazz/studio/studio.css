@@ -119,3 +119,14 @@ a.pill { color: var(--ink); }
 #status { min-height: 1.2em; }
 [hidden] { display: none !important; }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+
+/* Geste au clavier : ce que le prof joue pour expliquer un détail */
+.card.geste .card-head { padding: 8px 12px; }
+.card.geste .card-t { font-size: 17px; }
+.card.geste .card-n { color: var(--lh); }
+.card.geste .steps { padding: 8px 12px; }
+.card.geste .step { min-width: 0; }
+.card.geste .step-notes { font-size: 15px; }
+.card-m { margin: 0; padding: 0 12px 10px; font-size: 13px; font-weight: 600; color: var(--ink); background: var(--card); }
+.card.playing { border-color: var(--felt); box-shadow: 0 0 0 1px var(--felt); }
+.msg.prof .bubble:has(> p:only-child:empty) { display: none; }

@@ -61,6 +61,48 @@
     }
     return steps;
   }
+  // Geste au clavier : chaque attaque est une étape (une note, un intervalle, une résolution)
+  function onsetSteps(card, defLabel) {
+    const times = [];
+    card.events.forEach(e => { if (!times.some(t => Math.abs(t - e.t) < 1e-6)) times.push(e.t); });
+    times.sort((a, b) => a - b);
+    return times.map((t, i) => {
+      const own = (card.events.find(e => Math.abs(e.t - t) < 1e-6 && e.label) || {}).label || null;
+      const notes = [];
+      card.events.forEach(o => { if (o.t <= t + 1e-6 && o.t + o.d > t + 1e-6) notes.push.apply(notes, o.notes); });
+      const seen = new Set();
+      const uniq = notes.filter(n => !seen.has(n.midi) && seen.add(n.midi)).sort((a, b) => a.midi - b.midi);
+      return { t, d: (i + 1 < times.length ? times[i + 1] : card.length) - t, label: own || defLabel || null, own: !!own, notes: uniq };
+    });
+  }
+  // Voix appariées d'une étape à la suivante (sans la basse), si elles sont en même nombre
+  function voicePairs(a, b) {
+    const A = a.notes.filter(n => n.hand !== 'B');
+    const B = b.notes.filter(n => n.hand !== 'B');
+    if (!A.length || A.length !== B.length) return null;
+    return A.map((n, i) => ({ from: n, to: B[i], d: B[i].midi - n.midi }));
+  }
+  // Ce que fait chaque voix d'une étape à la suivante (sans la basse)
+  const IV = ['reste', '½ ton', '1 ton', 'tierce mineure', 'tierce majeure', 'quarte', 'triton', 'quinte', 'sixte mineure', 'sixte majeure', 'septième mineure', 'septième majeure', 'octave'];
+  function motion(a, b) {
+    const A = a.notes.filter(n => n.hand !== 'B');
+    const B = b.notes.filter(n => n.hand !== 'B');
+    if (!A.length || !B.length) return '';
+    if (A.length !== B.length) {
+      const am = new Set(A.map(n => n.midi));
+      const bm = new Set(B.map(n => n.midi));
+      const keep = B.filter(n => am.has(n.midi)).map(noteName);
+      const gone = A.filter(n => !bm.has(n.midi)).map(noteName);
+      const add = B.filter(n => !am.has(n.midi)).map(noteName);
+      return [keep.length ? 'garde ' + keep.join(' ') : '', gone.length ? 'lâche ' + gone.join(' ') : '', add.length ? 'ajoute ' + add.join(' ') : ''].filter(Boolean).join(', ');
+    }
+    return A.map((n, i) => {
+      const d = B[i].midi - n.midi;
+      if (!d) return noteName(n) + ' reste';
+      const ad = Math.abs(d);
+      return `${noteName(n)} → ${noteName(B[i])} (${ad <= 12 ? IV[ad] : ad + ' demi-tons'} ${d > 0 ? '↑' : '↓'})`;
+    }).join(', ');
+  }
   const isText = l => l && l.charAt(0) === '*';
   const labelText = l => (!l ? '' : isText(l) ? l.slice(1) : TJ.fmtSymbol(l));
   const degOf = (label, n) => (n.deg ? TJ.fmtDeg(n.deg) : label && !isText(label) ? TJ.degreeOf(label, n.midi) : '');
@@ -217,26 +259,44 @@
     const x = beat - b;
     return (b + (x <= 0.5 ? x * 4 / 3 : 2 / 3 + (x - 0.5) * 2 / 3)) * spb;
   }
-  function stop() {
+  // stop() : arrêt demandé (interrompu) ; stop(false) : fin naturelle
+  function stop(interrupted) {
     if (!P.card) return;
     cancelAnimationFrame(P.raf);
     AU.stopAll();
     const el = P.card.el;
     el.querySelector('.play').classList.remove('on');
     el.querySelector('.play span').textContent = 'Écouter';
+    el.classList.remove('playing');
     showStep(P.card, P.card.sel);
     P.card = null;
+    const cb = P.onEnd;
+    P.onEnd = null;
     if (playListener) playListener(false, 0);
+    if (cb) cb(interrupted !== false);
   }
-  function play(cardObj) {
+  const labelAt = (cardObj, beat) => { let l = null; cardObj.steps.forEach(st => { if (st.t <= beat + 1e-6) l = st.label; }); return l; };
+  // opts : from / to (en temps) pour un passage, events pour une suite à part (notes égrenées),
+  // step pour garder une étape allumée, onEnd(interrompu). Renvoie la durée en secondes.
+  function play(cardObj, opts) {
+    opts = opts || {};
     stop();
-    if (!AU.ensure()) return;
+    if (!AU.ensure()) { if (opts.onEnd) opts.onEnd(true); return 0; }
     const { card, spec } = cardObj;
-    const bpm = Number(spec.tempo) || 100;
-    const swing = !!spec.swing;
+    const bpm = Number(opts.bpm || spec.tempo) || 100;
+    const swing = !!spec.swing && !opts.events;
+    const from = opts.events ? 0 : Math.max(0, opts.from || 0);
+    const to = opts.to != null ? opts.to : card.length;
+    const whole = !opts.events && from === 0 && to >= card.length;
+    const evs = [];
+    (opts.events || card.events).forEach(ev => {
+      const s = Math.max(ev.t, from);
+      const e = Math.min(ev.t + ev.d, to);
+      if (e - s > 1e-6) evs.push(Object.assign({}, ev, { t: s - from, d: e - s, abs: s }));
+    });
     const t0 = AU.now() + 0.08;
     P.sched = [];
-    card.events.forEach(ev => {
+    evs.forEach(ev => {
       const s = t0 + beatSec(bpm, swing, ev.t);
       const e = t0 + beatSec(bpm, swing, ev.t + ev.d);
       const n = ev.notes.length;
@@ -246,36 +306,67 @@
         const dur = Math.max(0.05, (e - st) * (n > 1 ? 0.95 : 0.9));
         if (nt.hand === 'B') AU.bass(nt.midi, st, dur, 0.9);
         else AU.ep(nt.midi, st, dur, Math.min(1, (n > 1 ? 1.25 / Math.sqrt(n) : 0.85) * accent));
-        P.sched.push({ s: st, e: st + dur, m: nt.midi, hand: nt.hand, name: noteName(nt), label: ev.label });
+        const lab = ev.label || labelAt(cardObj, opts.events ? 0 : ev.abs) || spec.accord || null;
+        P.sched.push({ s: st, e: st + dur, m: nt.midi, hand: nt.hand, name: noteName(nt), deg: degOf(lab, nt) });
       });
     });
-    if (spec.charley) for (let b = 1; b < card.length; b += 2) AU.hat(t0 + beatSec(bpm, swing, b), 1);
-    P.endAt = t0 + beatSec(bpm, swing, card.length) + 0.3;
+    if (spec.charley && whole) for (let b = 1; b < card.length; b += 2) AU.hat(t0 + beatSec(bpm, swing, b), 1);
+    const length = opts.events ? Math.max.apply(null, evs.map(e => e.t + e.d)) : to - from;
+    P.endAt = t0 + beatSec(bpm, swing, length) + 0.3;
     P.card = cardObj;
     P.t0 = t0;
+    P.onEnd = opts.onEnd || null;
     if (playListener) playListener(true, P.endAt - AU.now());
     cardObj.el.querySelector('.play').classList.add('on');
     cardObj.el.querySelector('.play span').textContent = 'Stop';
+    cardObj.el.classList.add('playing');
     const tick = () => {
       if (P.card !== cardObj) return;
       const t = AU.now();
-      if (t > P.endAt) { stop(); return; }
+      if (t > P.endAt) { stop(false); return; }
       const map = new Map();
-      P.sched.forEach(x => { if (x.s <= t && t < x.e) map.set(x.m, { hand: x.hand, name: x.name }); });
+      P.sched.forEach(x => { if (x.s <= t && t < x.e) map.set(x.m, { hand: x.hand, name: x.name, deg: x.deg }); });
       paintKb(cardObj.el.querySelector('.kbw'), map);
-      const beat = (t - t0) / (60 / bpm);
+      const beat = (t - t0) / (60 / bpm) + from;
       let idx = -1;
-      cardObj.steps.forEach((st, i) => { if (st.t <= beat + 1e-3) idx = i; });
+      if (opts.marks) opts.marks.forEach(m => { if (m.t <= beat + 1e-3) idx = m.i; });
+      else cardObj.steps.forEach((st, i) => { if (st.t <= beat + 1e-3) idx = i; });
       cardObj.el.querySelectorAll('.step').forEach((b, i) => b.classList.toggle('now', i === idx));
       P.raf = requestAnimationFrame(tick);
     };
     P.raf = requestAnimationFrame(tick);
+    return P.endAt - AU.now();
+  }
+  // Rejoue les étapes i à j (comptées depuis 0)
+  function playSteps(cardObj, i, j, opts) {
+    const st = cardObj.steps;
+    const to = j + 1 < st.length ? st[j + 1].t : cardObj.card.length;
+    return play(cardObj, Object.assign({}, opts, { from: st[i].t, to }));
+  }
+  // Les notes d'une étape une par une (de la plus grave à la plus aiguë), puis ensemble
+  // (plusieurs étapes : l'une après l'autre)
+  function playArp(cardObj, idx, opts) {
+    const list = Array.isArray(idx) ? idx : [idx];
+    const events = [];
+    const marks = [];
+    let t = 0;
+    list.forEach(i => {
+      const st = cardObj.steps[i];
+      const ns = st.notes.slice().sort((a, b) => a.midi - b.midi);
+      marks.push({ t, i });
+      ns.forEach(n => { events.push({ t, d: 0.75, notes: [n], label: st.label }); t += 0.75; });
+      t += 0.25;
+      events.push({ t, d: 2, notes: ns, label: st.label });
+      t += 2.25;
+    });
+    showStep(cardObj, list[0]);
+    return play(cardObj, Object.assign({}, opts, { events, marks, bpm: 100 }));
   }
   function showStep(cardObj, i) {
     cardObj.sel = i;
     const st = cardObj.steps[i];
     const map = new Map();
-    if (st) st.notes.forEach(n => map.set(n.midi, { hand: n.hand, name: noteName(n), deg: degOf(st.label, n) }));
+    if (st) st.notes.forEach(n => map.set(n.midi, { hand: n.hand, name: noteName(n), deg: degOf(st.label || cardObj.spec.accord, n) }));
     paintKb(cardObj.el.querySelector('.kbw'), map);
     cardObj.el.querySelectorAll('.step').forEach((b, j) => { b.classList.toggle('sel', j === i); b.classList.remove('now'); });
   }
@@ -292,29 +383,34 @@
   }
 
   // ---------- Cartes musicales ----------
-  function buildCard(spec, n) {
+  // opts.geste : petit clavier sans partition (sauf spec.partition), une étape par attaque, mouvement des voix
+  function buildCard(spec, n, opts) {
+    const geste = !!(opts && opts.geste);
     const card = parseCard(spec);
-    const steps = chordSteps(card);
+    const steps = geste ? onsetSteps(card, spec.accord) : chordSteps(card);
     const el = document.createElement('figure');
-    el.className = 'card';
+    el.className = 'card' + (geste ? ' geste' : '');
     const midis = [].concat.apply([], card.events.map(e => e.notes.map(x => x.midi)));
     const [lo, hi] = kbRange(midis);
+    const moves = steps.length > 1 && steps.length <= 6 ? steps.slice(1).map((s, i) => motion(steps[i], s)).filter(Boolean) : [];
+    const stepSym = s => (geste && !s.own ? '' : esc(labelText(s.label) || 'Notes'));
     el.innerHTML = `
       <figcaption class="card-head">
-        <span class="card-n">Exemple ${n}</span>
-        <span class="card-t">${esc(spec.titre || 'Exemple')}</span>
+        <span class="card-n">${geste ? 'Au clavier' : 'Exemple ' + n}</span>
+        <span class="card-t">${esc(spec.titre || (geste ? steps.map(s => s.notes.map(noteName).join(' ')).join(' → ') : 'Exemple'))}</span>
         <button class="play" type="button"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg><span>Écouter</span></button>
       </figcaption>
-      <div class="sheet" aria-label="Partition"><div class="abc"></div></div>
+      <div class="sheet" aria-label="Partition"${geste && !spec.partition ? ' hidden' : ''}><div class="abc"></div></div>
       <div class="steps">${steps.map((s, i) => `<button class="step" type="button" data-i="${i}">
-        <span class="sym">${esc(labelText(s.label) || 'Notes')}</span>
+        ${stepSym(s) ? `<span class="sym">${stepSym(s)}</span>` : ''}
         <span class="step-notes">${s.notes.map(x => esc(noteName(x)) + (degOf(s.label, x) ? `<sub>${esc(degOf(s.label, x))}</sub>` : '')).join(' ')}</span></button>`).join('')}</div>
       <div class="dockk"><div class="felt" aria-hidden="true"></div><div class="kbw">${kbHtml(lo, hi)}</div></div>
+      ${geste && moves.length ? `<p class="card-m">${moves.map(esc).join('<br>')}</p>` : ''}
       ${spec.explication ? `<p class="card-x">${esc(spec.explication)}</p>` : ''}`;
-    const obj = { n, spec, card, steps, el, sel: 0 };
+    const obj = { n, spec, card, steps, el, sel: 0, geste, moves };
     const abc = cardAbc(card, spec);
     obj.abc = abc;
-    try {
+    if (!geste || spec.partition) try {
       if (window.ABCJS) window.ABCJS.renderAbc(el.querySelector('.abc'), abc, { responsive: 'resize', add_classes: true, paddingtop: 4, paddingbottom: 4, paddingleft: 2, paddingright: 8, scale: 1 });
       else el.querySelector('.sheet').hidden = true;
     } catch (e) { el.querySelector('.sheet').hidden = true; }
@@ -331,8 +427,19 @@
     });
     return obj;
   }
+  function stepText(s, i) {
+    return `étape ${i + 1}${s.label && (s.own !== false) ? ' ' + labelText(s.label) : ''} = ${s.notes.map(x => noteName(x) + (degOf(s.label, x) ? '(' + degOf(s.label, x) + ')' : '')).join(' ')}`;
+  }
   function cardSummary(obj) {
-    return `Exemple ${obj.n} « ${obj.spec.titre || ''} » : ` + obj.steps.map(s => `${labelText(s.label) || 'notes'} = ${s.notes.map(x => noteName(x) + (degOf(s.label, x) ? '(' + degOf(s.label, x) + ')' : '')).join(' ')}`).join(' ; ');
+    const head = obj.geste ? `Au clavier « ${obj.spec.titre || ''} »` : `Exemple ${obj.n} « ${obj.spec.titre || ''} »`;
+    const moves = obj.moves && obj.moves.length ? '. Mouvement des voix : ' + obj.moves.join(' | ') : '';
+    // Contrôle de la conduite des voix : un grand saut gâche une résolution
+    const jumps = [];
+    obj.steps.slice(1).forEach((st, i) => (voicePairs(obj.steps[i], st) || []).forEach(v => {
+      if (Math.abs(v.d) > 5) jumps.push(`${noteName(v.from)} → ${noteName(v.to)} entre l'étape ${i + 1} et ${i + 2}`);
+    }));
+    const warn = jumps.length && obj.steps.length <= 6 ? `. ATTENTION, des voix sautent (${jumps.slice(0, 3).join(', ')}) : pour faire entendre une résolution, chaque voix doit bouger d'un ton au plus (rapproche les octaves), sinon dis-le autrement` : '';
+    return head + ' : ' + obj.steps.map(stepText).join(' ; ') + moves + warn;
   }
 
   // ---------- Outils partagés ----------
@@ -414,7 +521,7 @@ Exemple II-V-I en shells : mg = "[Dm7]D3+F3+C4:4 [G7]G2+F3+B3:4 [Cmaj7]C3+E3+B3:
 Exemple de phrase : md = "A4:0.5 C5 E5 D5 C5 A4 G4:1 E4:4", mg = "[Am7]A2+G3+C4:4 [Dm7]D3+F3+C4:4"`;
 
   window.TJCards = {
-    parseCard, buildCard, cardSummary, play, stop, specFromInput, setPlayListener,
+    parseCard, buildCard, cardSummary, play, playSteps, playArp, stop, specFromInput, setPlayListener, motion, voicePairs, stepText,
     voicings: toolVoicings, trucs: toolTrucs, SCHEMAS, NOTATION, labelText, noteName,
   };
 })();
