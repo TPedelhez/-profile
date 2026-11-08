@@ -35,7 +35,44 @@
       comp.connect(ctx.destination);
     }
     if (ctx.state === 'suspended') ctx.resume();
+    unlockIOS();
     return ctx;
+  }
+
+  // iPhone et iPad en mode silencieux : le son des pages (Web Audio) est coupé, pas la voix de synthèse.
+  // On demande la catégorie « lecture » (iOS 17+), et sinon une piste <audio> muette en boucle, lancée
+  // pendant le geste, fait le même effet : les exemples s'entendent même interrupteur sur silencieux.
+  const IOS = typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+  let tag = null;
+  function silentWav() {
+    const n = 2000; // 0,25 s à 8 kHz, 8 bits
+    const b = new Uint8Array(44 + n);
+    const w = (o, str) => { for (let i = 0; i < str.length; i++) b[o + i] = str.charCodeAt(i); };
+    const u32 = (o, v) => { b[o] = v & 255; b[o + 1] = (v >> 8) & 255; b[o + 2] = (v >> 16) & 255; b[o + 3] = (v >>> 24) & 255; };
+    w(0, 'RIFF'); u32(4, 36 + n); w(8, 'WAVEfmt '); u32(16, 16); b[20] = 1; b[22] = 1; u32(24, 8000); u32(28, 8000); b[32] = 1; b[34] = 8;
+    w(36, 'data'); u32(40, n); b.fill(128, 44);
+    let bin = '';
+    for (let i = 0; i < b.length; i++) bin += String.fromCharCode(b[i]);
+    return 'data:audio/wav;base64,' + btoa(bin);
+  }
+  function unlockIOS() {
+    if (!IOS || typeof document === 'undefined') return;
+    try { if (navigator.audioSession && navigator.audioSession.type !== 'playback') navigator.audioSession.type = 'playback'; } catch (e) { /* ancien iOS */ }
+    try {
+      if (!tag) {
+        tag = document.createElement('audio');
+        tag.setAttribute('playsinline', '');
+        tag.setAttribute('x-webkit-airplay', 'deny');
+        tag.loop = true;
+        tag.src = silentWav();
+      }
+      if (tag.paused) { const p = tag.play(); if (p && p.catch) p.catch(() => {}); }
+    } catch (e) { /* pas grave : le son marche quand l'iPhone n'est pas en silencieux */ }
+  }
+  // Le premier toucher n'importe où débloque le son (iOS n'accepte que certains gestes, comme le relâcher)
+  if (typeof document !== 'undefined') {
+    const wake = () => { if (ctx && ctx.state === 'running' && (!IOS || (tag && !tag.paused))) return; ensure(); };
+    ['touchend', 'click', 'keydown'].forEach(t => document.addEventListener(t, wake, { capture: true, passive: true }));
   }
 
   function impulse(sec, decay) {
