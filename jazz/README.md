@@ -75,3 +75,11 @@ Analyser les sessions enregistrées (et rejouer les extraits dans le détecteur 
 ACCESS_CODE=… node jazz/tools/analyse-sessions.mjs            # toutes les sessions
 ACCESS_CODE=… node jazz/tools/analyse-sessions.mjs <session> --replay
 ```
+
+## Studio (conversation avec Claude)
+
+`studio/` est une page publiée comme artifact sur claude.ai : on y discute de piano avec Claude,
+sur son propre compte Claude (pas d'API). Claude dispose de trois outils de la page :
+`montrer` (partition abcjs + clavier + son), `voicings` (notes exactes d'un accord, via `theory.js`)
+et `trucs` (la bibliothèque). `studio.html` est au format artifact (sans `<html>`/`<head>`) ;
+la publier avec `theory.js`, `tricks.js`, `audio.js` et `studio/studio.js`, et la capacité `sample`.
