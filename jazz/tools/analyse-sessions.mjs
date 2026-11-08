@@ -135,6 +135,26 @@ function report(s) {
     by('rt_answer').forEach(a => console.log(`  « ${a.a.replace(/\s+/g, ' ').slice(0, 200)} »`));
     by('rt_error').forEach(e => console.log(`  erreur : ${e.msg}`));
   }
+  // Studio vocal : le fil de la conversation, avec les signalements mis en évidence
+  const sv = ev.filter(e => e.app === 'studio-vocal');
+  if (sv.length) {
+    const lat = by('latency').map(e => e.ms);
+    console.log(`\nStudio vocal : ${by('said').length} phrases de l'élève, ${by('answer').length} réponses, ${by('tool').length} outils (${by('tool_error').length} en erreur), ${by('ghost').length} fantômes écartés, ${by('cut').length} coupures, ${by('feedback').length} signalements`);
+    if (lat.length) console.log(`  délai fin de ta phrase → sa voix : médiane ${med(lat)} ms, 90 % sous ${p90(lat)} ms`);
+    const line = e => {
+      const t = (e.t / 1000).toFixed(1).padStart(6) + ' s ';
+      if (e.type === 'said') return t + `élève   « ${e.q} »`;
+      if (e.type === 'typed') return t + `écrit   « ${e.q} »`;
+      if (e.type === 'answer') return t + `prof    « ${e.a.replace(/\s+/g, ' ').slice(0, 220)} »`;
+      if (e.type === 'tool') return t + `outil   ${e.name} ${e.args}`.slice(0, 260);
+      if (e.type === 'tool_error') return t + `OUTIL EN ERREUR ${e.name} : ${e.msg}`;
+      if (e.type === 'ghost') return t + `fantôme écarté « ${e.q} »`;
+      if (e.type === 'feedback') return t + `★ SIGNALÉ (${e.by}) : ${e.note || '(sans texte)'}${e.screen ? ' · écran : ' + e.screen : ''}`;
+      if (e.type === 'rt_error' || e.type === 'js_error') return t + `ERREUR ${e.msg}${e.src ? ' (' + e.src + ':' + e.line + ')' : ''}`;
+      return t + e.type + (e.ms != null ? ' ' + e.ms + ' ms' : '') + (e.model ? ' ' + e.model : '') + (e.msg ? ' ' + e.msg : '');
+    };
+    sv.filter(e => !['latency', 'buf_events'].includes(e.type)).forEach(e => console.log('  ' + line(e)));
+  }
   const js = by('js_error');
   if (js.length) console.log(`\nErreurs JavaScript : ${js.map(e => `${e.msg} (${e.src}:${e.line})`).join(' | ')}`);
 }

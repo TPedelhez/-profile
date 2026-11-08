@@ -38,8 +38,8 @@
   const LOG = {
     session: new Date().toISOString().slice(0, 10) + '-' + Array.from(crypto.getRandomValues(new Uint8Array(8)), b => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join(''),
     seq: 0, queue: [], t0: performance.now(),
-    ev(type, data) {
-      if (!$('logToggle').checked) return;
+    ev(type, data, force) {
+      if (!force && !$('logToggle').checked) return;
       this.queue.push(Object.assign({ t: Math.round(performance.now() - this.t0), type, app: 'studio-vocal' }, data || {}));
       if (this.queue.length >= 40) this.flush();
     },
@@ -170,6 +170,16 @@
       },
     },
   };
+  const SIGNALER = {
+    description: 'Note une remarque pour améliorer l’app (bug, truc qui ne marche pas, idée), avec le contexte du moment, dans la boîte noire que les développeurs relisent. À appeler dès que l’élève dit que ça bugue, que quelque chose cloche dans l’app, ou te demande de noter quelque chose pour plus tard. Ensuite dis juste « c’est noté » et reprends.',
+    parameters: { type: 'object', properties: { remarque: { type: 'string', description: 'Ce que l’élève signale, avec ses mots' } }, required: ['remarque'] },
+  };
+  // Signalement : la remarque et ce qui était à l'écran à ce moment-là, envoyés tout de suite
+  function report(note, by) {
+    const msgs = Array.from(document.querySelectorAll('#thread .msg')).slice(-3).map(m => m.textContent.replace(/\s+/g, ' ').trim().slice(0, 140));
+    LOG.ev('feedback', { note: String(note || '').slice(0, 500), by, screen: msgs.join(' ‖ '), status: $('status').textContent, version: VERSION.stamp ? VERSION.stamp.slice(0, 40) : null }, true);
+    LOG.flush();
+  }
   const CARDS = []; // exemples affichés, numérotés pour toute la séance
   const sounded = obj => obj.steps.map(C.stepText).join(' ; ');
   function addCard(obj, msg) {
@@ -219,6 +229,11 @@
     }
     if (name === 'voicings') return C.voicings(args);
     if (name === 'trucs') return C.trucs(args);
+    if (name === 'signaler') {
+      report(args.remarque, 'voix');
+      status('Noté dans la boîte noire.');
+      return 'Noté. Dis juste « c’est noté » et reprends.';
+    }
     if (name === 'ecouter') {
       const j = journalText(args.secondes);
       if (j == null) return 'L’écoute du piano n’est pas activée : propose à l’élève de cocher « Il écoute aussi mon piano ».';
@@ -244,6 +259,7 @@ ${C.NOTATION}`;
     const defs = Object.keys(C.SCHEMAS).map(name => ({ type: 'function', name, description: C.SCHEMAS[name].description, parameters: C.SCHEMAS[name].parameters }));
     defs.push({ type: 'function', name: 'jouer', description: JOUER.description, parameters: JOUER.parameters });
     defs.push({ type: 'function', name: 'ecouter', description: ECOUTER.description, parameters: ECOUTER.parameters });
+    defs.push({ type: 'function', name: 'signaler', description: SIGNALER.description, parameters: SIGNALER.parameters });
     return defs;
   }
 
@@ -588,6 +604,27 @@ ${C.NOTATION}`;
   // pour les tests de bout en bout (outils et consignes réels, sans appel vocal)
   window.TJVoix = { toolDefs, instructions, isGhost, runTool: (name, args) => runTool(name, args, RT.msg || (RT.msg = addMsg('prof', ''))), state: () => ({ mic: RT.mic ? RT.mic.enabled : null, cut: !$('cutBtn').hidden }) };
 
+  // ---------- Nouvelle version en ligne : rechargée toute seule, ou proposée ----------
+  const VERSION = { stamp: null, files: ['./', 'voix.js', 'cards.js', 'studio.css', '../theory.js', '../audio.js', '../tricks.js'] };
+  async function versionStamp() {
+    const tags = await Promise.all(VERSION.files.map(u => fetch(u, { method: 'HEAD', cache: 'no-store' }).then(r => (r.ok && r.headers.get('etag')) || '').catch(() => '')));
+    return tags.some(Boolean) ? tags.join('|') : null;
+  }
+  const quietPage = () => !RT.on && document.querySelectorAll('#thread .msg').length <= 1;
+  async function checkVersion() {
+    if (document.visibilityState !== 'visible') return;
+    const s = await versionStamp();
+    if (!s) return;
+    if (VERSION.stamp == null) { VERSION.stamp = s; return; }
+    if (s === VERSION.stamp) return;
+    VERSION.fresh = true;
+    if (quietPage()) { LOG.flush(true); location.reload(); return; }
+    $('reloadBtn').hidden = false;
+  }
+  setInterval(checkVersion, 10000);
+  checkVersion();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkVersion(); });
+
   // ---------- Démarrage ----------
   // hauteur du panneau d'appel, pour que les exemples ne passent pas dessous
   try {
@@ -604,6 +641,13 @@ ${C.NOTATION}`;
   });
   $('callBtn').addEventListener('click', () => { if (RT.on) hangUp('Raccroché.'); else call(); });
   $('cutBtn').addEventListener('click', cut);
+  $('reloadBtn').addEventListener('click', () => { if (RT.on && !window.confirm('Raccrocher et charger la nouvelle version ?')) return; if (RT.on) hangUp(); LOG.flush(true); location.reload(); });
+  $('reportBtn').addEventListener('click', () => {
+    const note = window.prompt('Qu’est-ce qui cloche ? (facultatif : le moment est noté de toute façon)', '');
+    if (note == null) return;
+    report(note, 'bouton');
+    status('Noté dans la boîte noire. Dis « analyse ma session » à Claude.');
+  });
   window.addEventListener('error', e => LOG.ev('js_error', { msg: String(e.message || e).slice(0, 200), src: String(e.filename || '').split('/').pop(), line: e.lineno || null }));
   $('composer').addEventListener('submit', e => { e.preventDefault(); const v = $('q').value; $('q').value = ''; sendText(v); });
   $('q').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); } });

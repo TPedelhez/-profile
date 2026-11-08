@@ -34,6 +34,7 @@
     .msg.me.voice.heard .bubble { border-style: solid; color: var(--ink); background: var(--me); }
     .intro .bubble p + p { margin-top: 8px; }
     .top nav { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill.fresh { background: var(--felt); color: var(--felt-ink); border-color: var(--felt); }
     .card, .card .dockk, .msg { scroll-margin-bottom: calc(var(--dockh, 240px) + 12px); scroll-margin-top: 150px; }
     /* pendant l'appel, le panneau se fait plus discret : le réglage mini ne vaut que pour le prochain appel */
     #thread.live ~ .dock-in label[for="miniToggle"], #thread.live ~ .dock-in label[for="logToggle"] { display: none; }
@@ -46,6 +47,8 @@
       <nav>
         <a class="pill" href="../">Les trucs</a>
         <a class="pill" href="../ecoute/">Labo d’écoute</a>
+        <button class="pill" id="reportBtn" type="button">Signaler</button>
+        <button class="pill fresh" id="reloadBtn" type="button" hidden>Nouvelle version : recharger</button>
       </nav>
     </header>
 
