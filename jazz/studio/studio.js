@@ -19,10 +19,21 @@
   let CARDS = [];
   let currentMsg = null; // message de Claude en cours
   let lastText = ''; // texte de sa réponse en cours (pour la voix)
-  function addCard(spec, m) {
+  // Chaque exemple se place dans le texte, à l'endroit où Claude l'a appelé (pos = longueur du texte à ce moment-là)
+  function addCard(spec, m, pos) {
     const obj = spec.geste ? buildCard(spec, 0, { geste: true }) : buildCard(spec, CARDS.length + 1); // erreur lisible si la notation est fausse
     if (!spec.geste) CARDS.push(obj);
-    if (m) { m.cardsEl.appendChild(obj.el); m.cards.push(spec); }
+    if (m) {
+      const last = m.blocks[m.blocks.length - 1];
+      last.after(obj.el);
+      const next = document.createElement('div');
+      next.className = 'bubble';
+      obj.el.after(next);
+      m.blocks.push(next);
+      m.at.push(pos != null ? pos : m.text.length);
+      m.cards.push(spec);
+      m.setText(m.text);
+    }
     return obj;
   }
 
@@ -106,7 +117,6 @@
   async function toolMontrer(input, ctx) {
     const spec = C.specFromInput(input);
     const obj = addCard(spec, currentMsg);
-    setStatus(`Exemple ${obj.n} affiché`);
     const out = cardSummary(obj) + '. Affiché avec la partition et le clavier ; l’élève peut l’écouter.';
     if (!input.jouer) return out;
     await perform(obj, done => C.play(obj, { onEnd: done }), ctx && ctx.signal);
@@ -270,12 +280,24 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
       return `<p>${lines.map(inline).join('<br>')}</p>`;
     }).join('');
   }
-  function msgEl(role, text, cards, chip) {
+  function msgEl(role, text, cards, chip, at) {
     const wrap = document.createElement('article');
     wrap.className = 'msg ' + (role === 'user' ? 'me' : 'prof');
-    wrap.innerHTML = `<div class="bubble">${role === 'user' ? `<p>${esc(text)}</p>` : md(text || '')}</div>${chip ? `<p class="chip">🎹 ${esc(chip)}</p>` : ''}<div class="cards"></div>`;
-    const m = { el: wrap, textEl: wrap.querySelector('.bubble'), cardsEl: wrap.querySelector('.cards'), cards: [] };
-    (cards || []).forEach(spec => { try { addCard(spec, m); } catch (e) { /* carte illisible */ } });
+    wrap.innerHTML = `<div class="bubble">${role === 'user' ? `<p>${esc(text)}</p>` : ''}</div>${chip ? `<p class="chip">🎹 ${esc(chip)}</p>` : ''}`;
+    const m = { el: wrap, textEl: wrap.querySelector('.bubble'), blocks: [wrap.querySelector('.bubble')], at: [], cards: [], text: '' };
+    // le texte est découpé autour des exemples : bloc 0, exemple 1, bloc 1, exemple 2…
+    m.setText = t => {
+      m.text = t || '';
+      m.blocks.forEach((b, i) => {
+        const part = m.text.slice(i ? m.at[i - 1] : 0, i < m.at.length ? m.at[i] : m.text.length);
+        b.innerHTML = part.trim() ? md(part) : '';
+      });
+    };
+    if (role !== 'user') {
+      m.text = text || '';
+      (cards || []).forEach((spec, i) => { try { addCard(spec, m, at && at[i] != null ? at[i] : (text || '').length); } catch (e) { /* carte illisible */ } });
+      m.setText(text || '');
+    }
     $('thread').appendChild(wrap);
     return m;
   }
@@ -284,7 +306,7 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
 
   // Ce que Claude relit des échanges passés (il ne garde rien entre deux appels)
   function history() {
-    const all = [{ role: 'assistant', text: INTRO_TEXT, cards: [DEMO] }].concat(turns);
+    const all = [{ role: 'assistant', text: INTRO_TEXT, cards: [] }].concat(turns);
     let n = 0;
     const h = all.map(t => {
       const listed = (t.cards || []).map(c => c.geste
@@ -338,14 +360,14 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
     setStatus('');
     let finalText = '';
     try {
-      const opts = { signal: ctl.signal, onText: ({ text: t }) => { finalText = t; lastText = t; m.textEl.innerHTML = md(t); VOICE.feed(t, false); } };
+      const opts = { signal: ctl.signal, onText: ({ text: t }) => { finalText = t; lastText = t; m.setText(t); VOICE.feed(t, false); } };
       if (tools) opts.tools = TOOLS; else opts.cache = false;
       // rapide par défaut : environ une seconde par aller-retour d'outil (le niveau « default » réfléchit 30 à 90 s)
       opts.modelTier = $('deep').checked ? 'default' : 'quick';
       const r = await sample(history(), opts);
       finalText = r.text;
       lastText = r.text;
-      m.textEl.innerHTML = md(r.text);
+      m.setText(r.text);
       await SEQ; // la voix reprend après le dernier exemple joué
       VOICE.feed(r.text, true);
       if (r.truncated) setStatus('Réponse coupée : demande-lui la suite.');
@@ -353,7 +375,7 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
     } catch (e) {
       const keep = e && e.text;
       finalText = keep || '';
-      m.textEl.innerHTML = keep ? md(keep) : '';
+      m.setText(keep || '');
       const copy = {
         cancelled: 'Arrêté.', not_granted: 'Tu n’as pas autorisé le studio à utiliser Claude. Recharge la page pour qu’il te le redemande.',
         sampling_disabled: 'Claude n’est pas disponible pour ce compte.', rate_limited: 'Trop de demandes d’un coup ou limite d’usage atteinte : réessaie dans un moment.',
@@ -367,7 +389,7 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
       currentMsg = null;
       $('sendBtn').hidden = false;
       $('stopBtn').hidden = true;
-      if (finalText || m.cards.length) { turns.push({ role: 'assistant', text: finalText, cards: m.cards }); save(); }
+      if (finalText || m.cards.length) { turns.push({ role: 'assistant', text: finalText, cards: m.cards, at: m.at }); save(); }
     }
   }
   // Sans outils de page : Claude écrit ses exemples dans des blocs ```exemple {json}```
@@ -375,23 +397,19 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
     const re = /```exemple\s*([\s\S]*?)```/g;
     let x;
     while ((x = re.exec(text))) {
-      try { addCard(JSON.parse(x[1]), m); } catch (e) { /* bloc illisible */ }
+      try { addCard(JSON.parse(x[1]), m, text.replace(re, '').length); } catch (e) { /* bloc illisible */ }
     }
-    m.textEl.innerHTML = md(text.replace(re, ''));
+    m.setText(text.replace(re, ''));
   }
 
   // ---------- Démarrage ----------
-  const INTRO_TEXT = 'Salut ! Pose-moi n’importe quelle question sur le piano jazz, en l’écrivant ou en la dictant avec le micro du clavier. Je te montre les notes sur la portée et le clavier, et je te les fais entendre. Par exemple, voici le II-V-I, l’enchaînement le plus joué du jazz :';
-  const DEMO = {
-    titre: 'II-V-I en Do, en shells', mg: '[Dm7]D3+F3+C4:4 [G7]G2+F3+B3:4 [Cmaj7]C3+E3+B3:8', tempo: 80,
-    explication: 'Touche un accord pour l’entendre seul, ou Écouter pour l’enchaînement.',
-  };
+  const INTRO_TEXT = 'Salut ! Pose-moi une question de piano jazz, par écrit ou en dictée. Je te montre les notes et je te les fais entendre.';
   function renderAll() {
     $('thread').innerHTML = '';
     CARDS = [];
-    const m = msgEl('assistant', INTRO_TEXT, [DEMO]);
+    const m = msgEl('assistant', INTRO_TEXT);
     m.el.classList.add('intro');
-    turns.forEach(t => msgEl(t.role, t.text, t.cards, t.chip));
+    turns.forEach(t => msgEl(t.role, t.text, t.cards, t.chip, t.at));
     $('ideas').hidden = turns.length > 0;
     requestAnimationFrame(scrollDown);
   }
@@ -415,7 +433,9 @@ Dans ton texte : noms de notes en Do Ré Mi (ré, fa, si bémol), symboles d'acc
       pianoCheck();
     });
     if (!VOICE.ok) $('speakLbl').hidden = true;
-    $('newBtn').addEventListener('click', () => { if (busy) busy.abort(); stop(); VOICE.reset(); turns = []; save(); renderAll(); setStatus('Nouvelle conversation.'); });
+    $('newBtn').addEventListener('click', () => { if (busy) busy.abort(); stop(); VOICE.reset(); turns = []; save(); renderAll(); setStatus(''); });
+    // le menu se ferme quand on touche ailleurs
+    document.addEventListener('click', e => { const mnu = $('menu'); if (mnu && mnu.open && !mnu.contains(e.target)) mnu.open = false; });
     document.querySelectorAll('[data-ask]').forEach(b => b.addEventListener('click', () => { $('q').value = b.dataset.ask; send(b.dataset.ask); $('q').value = ''; }));
   }
   function autosize() { const q = $('q'); q.style.height = 'auto'; q.style.height = Math.min(160, q.scrollHeight) + 'px'; }

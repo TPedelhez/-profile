@@ -5,35 +5,50 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@800;900&family=Kalam:wght@700&family=Libre+Franklin:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="studio.css">
 
-<div class="app">
-  <header class="top">
-    <div class="brand">Studio <b>Truc Jazz</b><small>Parle piano avec Claude : il te montre les notes et te les fait entendre.</small></div>
-    <button class="pill" id="newBtn" type="button">Nouvelle conversation</button>
+<div class="app chat">
+  <header class="bar">
+    <span class="mark">Truc <b>Jazz</b></span>
+    <button class="link" id="newBtn" type="button">Nouveau</button>
+    <details class="menu" id="menu">
+      <summary aria-label="Réglages"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="19" cy="12" r="2" fill="currentColor"/></svg></summary>
+      <div class="panel">
+        <label for="deep"><input type="checkbox" id="deep"> Réfléchir plus (réponses bien plus lentes)</label>
+        <p>Pour que Claude sache ce que tu joues : ouvre le <a href="https://truc-jazz.vercel.app/ecoute/" target="_blank" rel="noopener">Labo d’écoute</a> sur un appareil près du piano, active le micro, coche « Envoyer au studio Claude », puis touche le piano en bas.</p>
+      </div>
+    </details>
   </header>
 
   <main id="thread" aria-live="polite"></main>
 
+  <div class="ideas" id="ideas">
+    <button type="button" data-ask="Montre-moi un II-V-I en Fa avec des voicings sans fondamentale, et fais-moi entendre ce qui bouge.">II-V-I sans fondamentale</button>
+    <button type="button" data-ask="Pourquoi on dit que la septième se résout sur la tierce ? Fais-moi entendre.">La 7e qui se résout</button>
+    <button type="button" data-ask="Apprends-moi une petite phrase blues en Do avec la note écrasée.">Une phrase blues</button>
+    <button type="button" data-ask="Quelle est la différence entre Dm7, D7 et Dmaj7 ? Joue-les l’un après l’autre.">Dm7, D7, Dmaj7</button>
+  </div>
+
   <div class="dock-in">
-    <div class="ideas" id="ideas">
-      <button type="button" data-ask="Montre-moi un II-V-I en Fa avec des voicings sans fondamentale, et explique la différence avec les shells.">II-V-I sans fondamentale</button>
-      <button type="button" data-ask="Quelle est la différence entre Dm7, D7 et Dmaj7 ? Montre-les côte à côte.">Dm7, D7, Dmaj7</button>
-      <button type="button" data-ask="Apprends-moi une petite phrase blues en Do avec la note écrasée.">Une phrase blues</button>
-      <button type="button" data-ask="Comment je fais une intro avec le turnaround I-VI-II-V ?">Une intro</button>
+    <div class="coderow" id="codeRow" hidden>
+      <input id="codeIn" type="password" placeholder="Code d’accès du site Truc Jazz" autocomplete="off" aria-label="Code d’accès du site Truc Jazz">
+      <button type="button" id="codeOk" class="link">Valider</button>
     </div>
     <form id="composer" autocomplete="off">
-      <label for="q" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">Ta question</label>
-      <textarea id="q" rows="1" placeholder="Écris, ou dicte avec le micro du clavier…" disabled></textarea>
-      <button class="send" id="sendBtn" type="submit" disabled>Envoyer</button>
-      <button class="stopb" id="stopBtn" type="button" hidden>Stop</button>
+      <label class="tg" id="speakLbl" for="speak" title="Lire les réponses à voix haute">
+        <input type="checkbox" id="speak" checked>
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span class="sr">Lire les réponses à voix haute</span>
+      </label>
+      <label class="tg" id="pianoLbl" for="piano" title="Joindre ce que le Labo d’écoute entend au piano">
+        <input type="checkbox" id="piano">
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 5v14M12 5v14M16 5v14" stroke="currentColor" stroke-width="1.4"/><path d="M6.6 5h2.8v8H6.6zM14.6 5h2.8v8h-2.8z" fill="currentColor"/></svg>
+        <span class="sr">Mon piano (via le Labo d’écoute)</span>
+      </label>
+      <label for="q" class="sr">Ta question</label>
+      <textarea id="q" rows="1" placeholder="Écris ou dicte…" disabled></textarea>
+      <button class="send" id="sendBtn" type="submit" disabled aria-label="Envoyer"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M5 12h12M12 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button class="stopb" id="stopBtn" type="button" hidden aria-label="Arrêter"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg></button>
     </form>
-    <div class="opts">
-      <label for="speak" id="speakLbl"><input type="checkbox" id="speak" checked> Lire les réponses à voix haute</label>
-      <label for="piano" id="pianoLbl"><input type="checkbox" id="piano"> Mon piano (via le <a href="https://truc-jazz.vercel.app/ecoute/" target="_blank" rel="noopener">Labo d’écoute</a>)</label>
-      <label for="deep"><input type="checkbox" id="deep"> Réfléchir plus (bien plus lent)</label>
-      <span id="codeRow" hidden><input id="codeIn" type="password" placeholder="Code d’accès du site" autocomplete="off" aria-label="Code d’accès du site Truc Jazz"> <button type="button" id="codeOk" class="pill">OK</button></span>
-      <span id="pianoInfo" role="status"></span>
-      <span id="status" role="status"></span>
-    </div>
+    <p class="note"><span id="pianoInfo" role="status"></span><span id="status" role="status"></span></p>
   </div>
 </div>
 
