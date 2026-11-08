@@ -252,6 +252,7 @@ ${C.NOTATION}`;
     pc: null, dc: null, mic: null, audio: null, an: null, buf: null, on: false,
     speaking: false, lastVoice: 0, tStop: null, latShown: true, msg: null, done: new Set(), outputs: [],
     queue: [], playing: false, respDone: true, bufActive: false, sawBuf: false, nextAt: 0,
+    unmuteAt: 0, pendingUser: null, respItem: null, respOut: [], drop: false, skipNext: false,
     cardPlaying: false, lastActivity: 0, model: '', heard: new Map(),
   };
   const send = obj => { if (RT.dc && RT.dc.readyState === 'open') RT.dc.send(JSON.stringify(obj)); };
@@ -297,6 +298,35 @@ ${C.NOTATION}`;
     const k = obj.el.querySelector('.dockk') || obj.el;
     k.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
+  // Transcriptions fantômes : ce que la reconnaissance « entend » dans un bruit ou de la musique
+  function isGhost(t) {
+    const x = String(t || '').toLowerCase().replace(/[.,;:!?…«»"'’()\-\s]+/g, ' ').trim();
+    if (!x || !/[a-zà-ÿ]/.test(x)) return true;
+    if (/^(chat ?gpt|chat|bonjour|musique|applaudissements|rires|générique)$/.test(x)) return true;
+    return /sous titr|amara|abonnez|merci d avoir regard|♪/.test(x);
+  }
+  function cancelResponse() {
+    RT.drop = true;
+    send({ type: 'response.cancel' });
+    send({ type: 'output_audio_buffer.clear' });
+  }
+  function dropGhost(itemId, bubble, text) {
+    LOG.ev('ghost', { q: text });
+    if (bubble) bubble.el.remove();
+    if (itemId) send({ type: 'conversation.item.delete', item_id: itemId });
+    if (RT.pendingUser === itemId) { RT.pendingUser = null; RT.skipNext = true; }
+    else if (RT.respItem === itemId && !RT.respDone) cancelResponse();
+  }
+  // Bouton « Couper » : il se tait tout de suite (et la démonstration s'arrête)
+  function cut() {
+    if (RT.queue.length || RT.playing) cancelQueue('coupé par l’élève');
+    if (!RT.respDone) send({ type: 'response.cancel' });
+    send({ type: 'output_audio_buffer.clear' });
+    RT.bufActive = false;
+    RT.unmuteAt = 0;
+    LOG.ev('cut', {});
+    status('Coupé. À toi.');
+  }
   function startNext() {
     const it = RT.queue.shift();
     RT.playing = true;
@@ -330,6 +360,7 @@ ${C.NOTATION}`;
         sendPianoContext();
         break;
       case 'output_audio_buffer.started':
+        if (!RT.sawBuf) LOG.ev('buf_events', {});
         RT.bufActive = true;
         RT.sawBuf = true;
         break;
@@ -338,6 +369,7 @@ ${C.NOTATION}`;
         RT.bufActive = false;
         break;
       case 'input_audio_buffer.speech_stopped': {
+        RT.pendingUser = ev.item_id || null;
         RT.tStop = performance.now();
         RT.latShown = false;
         // bulle « ta voix », remplie quand la transcription arrive
@@ -349,7 +381,9 @@ ${C.NOTATION}`;
       case 'conversation.item.input_audio_transcription.completed': {
         const m = RT.heard.get(ev.item_id);
         const t = (ev.transcript || '').trim();
-        if (m) { m.p.textContent = t || '(ta voix)'; if (t) m.el.classList.add('heard'); RT.heard.delete(ev.item_id); }
+        RT.heard.delete(ev.item_id);
+        if (isGhost(t)) { dropGhost(ev.item_id, m, t); break; }
+        if (m) { m.p.textContent = t || '(ta voix)'; if (t) m.el.classList.add('heard'); }
         if (t) LOG.ev('said', { q: t });
         break;
       }
@@ -363,6 +397,13 @@ ${C.NOTATION}`;
         // une bulle par réponse : parole, geste joué, parole… dans l'ordre où ça se passe
         RT.msg = null;
         RT.respDone = false;
+        RT.respItem = RT.pendingUser;
+        RT.pendingUser = null;
+        RT.respOut = [];
+        if (RT.skipNext) { RT.skipNext = false; cancelResponse(); }
+        break;
+      case 'response.output_item.added':
+        if (ev.item && ev.item.id) RT.respOut.push(ev.item.id);
         break;
       case 'response.output_audio_transcript.delta':
         if (!RT.msg) RT.msg = addMsg('prof', '');
@@ -381,15 +422,28 @@ ${C.NOTATION}`;
         if (ev.name) execCall({ type: 'function_call', call_id: ev.call_id, name: ev.name, arguments: ev.arguments });
         break;
       case 'response.done':
-        if (ev.response && Array.isArray(ev.response.output)) ev.response.output.forEach(execCall);
         RT.respDone = true;
+        if (RT.drop) {
+          // réponse à un bruit, annulée : on l'efface du fil et de la conversation
+          RT.drop = false;
+          if (RT.msg && !RT.msg.cards.children.length) RT.msg.el.remove();
+          RT.msg = null;
+          RT.respOut.forEach(id => send({ type: 'conversation.item.delete', item_id: id }));
+          status('À toi : parle-lui, joue, ou écris.');
+          break;
+        }
+        if (ev.response && Array.isArray(ev.response.output)) ev.response.output.forEach(execCall);
         if (ev.response && ev.response.status === 'cancelled' && RT.queue.length) cancelQueue('réponse coupée');
         else flush();
         break;
-      case 'error':
-        status('Erreur du modèle vocal : ' + ((ev.error && ev.error.message) || 'inconnue'));
-        LOG.ev('rt_error', { msg: (ev.error && ev.error.message) || null });
+      case 'error': {
+        const msg = (ev.error && ev.error.message) || 'inconnue';
+        LOG.ev('rt_error', { msg, code: (ev.error && ev.error.code) || null });
+        // annuler une réponse déjà finie ou effacer un élément disparu : sans importance
+        if (/cancel|not found|does not exist|no active response/i.test(msg + ' ' + ((ev.error && ev.error.code) || ''))) break;
+        status('Erreur du modèle vocal : ' + msg);
         break;
+      }
       default:
     }
   }
@@ -413,10 +467,17 @@ ${C.NOTATION}`;
           $('lat').textContent = `Tu as fini de parler → il répond en ${(ms / 1000).toFixed(2).replace('.', ',')} s`;
           LOG.ev('latency', { ms });
         }
-        if (!RT.speaking) status('Il parle… (tu peux lui couper la parole)');
+        if (!RT.speaking) status('Il parle… (touche « Couper » pour l’interrompre)');
       }
       RT.speaking = speaking;
     }
+    // Micro de l'appel fermé pendant qu'il parle ou qu'un exemple joue, et 350 ms après :
+    // sinon sa voix ou le piano de l'écran reviennent dans le micro et le coupent en pleine phrase.
+    if (RT.speaking || RT.bufActive || RT.cardPlaying) RT.unmuteAt = now + 350;
+    const open = now >= RT.unmuteAt;
+    if (RT.mic && RT.mic.enabled !== open) RT.mic.enabled = open;
+    const busy = RT.speaking || RT.bufActive || RT.playing || RT.queue.length > 0 || !RT.respDone;
+    if ($('cutBtn').hidden === busy) $('cutBtn').hidden = !busy;
     // la démonstration attend la fin de sa phrase (et un petit souffle)
     const quiet = now - RT.lastVoice > (RT.bufActive ? 1500 : RT.sawBuf ? 250 : 500);
     if (RT.queue.length && !RT.playing && RT.respDone && quiet && now >= RT.nextAt) startNext();
@@ -427,7 +488,7 @@ ${C.NOTATION}`;
   // Pendant qu'un exemple joue, on coupe le micro de l'appel (sinon il s'entend et s'interrompt)
   C.setPlayListener((playing, seconds) => {
     RT.cardPlaying = playing;
-    if (RT.mic) RT.mic.enabled = !playing;
+    if (RT.mic && playing) RT.mic.enabled = false; // rouvert par tick() un peu après la fin
     if (PIANO.on && playing) PIANO.muteUntil = PIANO.ctx.currentTime + seconds + 0.5;
     if (playing) RT.lastActivity = performance.now();
   });
@@ -466,7 +527,7 @@ ${C.NOTATION}`;
       dc.onmessage = e => { try { onEvent(JSON.parse(e.data)); } catch (err) { /* événement illisible */ } };
       dc.onopen = () => {
         send({ type: 'session.update', session: { type: 'realtime', instructions: instructions(), tools: toolDefs(), tool_choice: 'auto' } });
-        status('Connecté. Parle-lui : « Montre-moi un II-V-I en fa », « Écoute ce que je joue »…');
+        status('Connecté. Parle-lui ! Quand il parle ou joue, ton micro se coupe : « Couper » pour l’interrompre.');
       };
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -498,7 +559,8 @@ ${C.NOTATION}`;
     if (RT.mic) RT.mic.stop();
     if (RT.audio) RT.audio.srcObject = null;
     if (RT.playing) C.stop();
-    Object.assign(RT, { pc: null, dc: null, mic: null, stream: null, an: null, msg: null, queue: [], playing: false, outputs: [] });
+    Object.assign(RT, { pc: null, dc: null, mic: null, stream: null, an: null, msg: null, queue: [], playing: false, outputs: [], drop: false, skipNext: false, pendingUser: null });
+    $('cutBtn').hidden = true;
     RT.heard.forEach(m => { if (m.p.textContent === '…') m.p.textContent = '(ta voix)'; });
     RT.heard.clear();
     stopPiano();
@@ -524,7 +586,7 @@ ${C.NOTATION}`;
   }
 
   // pour les tests de bout en bout (outils et consignes réels, sans appel vocal)
-  window.TJVoix = { toolDefs, instructions, runTool: (name, args) => runTool(name, args, RT.msg || (RT.msg = addMsg('prof', ''))) };
+  window.TJVoix = { toolDefs, instructions, isGhost, runTool: (name, args) => runTool(name, args, RT.msg || (RT.msg = addMsg('prof', ''))), state: () => ({ mic: RT.mic ? RT.mic.enabled : null, cut: !$('cutBtn').hidden }) };
 
   // ---------- Démarrage ----------
   // hauteur du panneau d'appel, pour que les exemples ne passent pas dessous
@@ -541,6 +603,8 @@ ${C.NOTATION}`;
     if (e.target.checked) await startPiano(IOS ? RT.stream : null); else stopPiano();
   });
   $('callBtn').addEventListener('click', () => { if (RT.on) hangUp('Raccroché.'); else call(); });
+  $('cutBtn').addEventListener('click', cut);
+  window.addEventListener('error', e => LOG.ev('js_error', { msg: String(e.message || e).slice(0, 200), src: String(e.filename || '').split('/').pop(), line: e.lineno || null }));
   $('composer').addEventListener('submit', e => { e.preventDefault(); const v = $('q').value; $('q').value = ''; sendText(v); });
   $('q').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $('composer').requestSubmit(); } });
   document.querySelectorAll('[data-say]').forEach(b => b.addEventListener('click', () => { if (RT.on) sendText(b.dataset.say); else status('Appelle d’abord le prof.'); }));

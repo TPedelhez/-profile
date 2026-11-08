@@ -21,6 +21,7 @@
     .call[data-on] { background: var(--ink); color: var(--paper); }
     .call[data-on]::before { background: #3CC46B; opacity: 1; animation: live 1.6s ease-in-out infinite; }
     .call:disabled { opacity: 0.55; cursor: default; }
+    .cut { flex: 0 0 auto; border: 1px solid var(--ink); border-radius: 999px; padding: 11px 16px; background: transparent; font-weight: 700; cursor: pointer; }
     @keyframes live { 50% { opacity: 0.35; } }
     .callinfo { display: grid; gap: 2px; min-width: 0; font-size: 13px; color: var(--ink-2); line-height: 1.35; }
     #status { color: var(--ink); font-weight: 600; }
@@ -61,6 +62,7 @@
     <div class="dock-in">
       <div class="callrow">
         <button class="call" id="callBtn" type="button">Appeler le prof</button>
+        <button class="cut" id="cutBtn" type="button" hidden>Couper</button>
         <div class="callinfo">
           <span id="status" role="status">Prêt. Pose ton téléphone sur le pupitre.</span>
           <span id="lat"></span>
